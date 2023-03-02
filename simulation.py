@@ -1,4 +1,5 @@
 import random
+import numpy as np
 
 """
     HRCGraph - class for Homophilic Relaxed Caveman Graph
@@ -18,6 +19,7 @@ class HRCGraph:
         self.edges = dict()
         self.thresholds = dict()
         self.beliefs = dict()
+        self.mcgs = []
 
         # create edge set for clique with self loops
         for i in range(1, self.n+1):
@@ -28,11 +30,20 @@ class HRCGraph:
                 N[j] = random.uniform(0.01, 1.0)
 
             # normalise the weights
-            total = sum([y for _,y in N.items()])
+            total = sum([y for _,y in N.items()])                
             for m in N:
-                N[m] = round(N[m]/total,3)
+                N[m] = round(N[m]/total, 4)
+            
+            # ensure the weights sum to 1
+            total = sum([y for _,y in N.items()])
+            if total != 1:
+                e = 1 - total
+                N[i] += e
             
             self.edges[i] = N
+
+            # ensure they sum to 1
+
         
         # initialise the thresholds + beliefs
         for i in range(1, self.n + 1):
@@ -45,6 +56,9 @@ class HRCGraph:
             while(len(queue) > 0):
                 v = queue.pop(0)
                 if v not in self.edges[u]: continue
+
+                # do not rewire the self-loops
+                if u == v: continue
                 
                 x = random.randint(1, self.n)
                 while(x == v):
@@ -90,19 +104,124 @@ class HRCGraph:
 
             visited.add(i)
         return
-
-    """ MCG - determine the minimal closed groups in the graph with no outgoing edges
+    
+    """ dfs
     """
-    def MCG(self):
-        return 
+    def dfs(self, u, visited, currentMCG):
+        visited[u] = True
+        currentMCG.append(u)
+        for v in self.edges[u]:
+            if not visited[v]:
+                self.dfs(v, visited, currentMCG)
+    
+
+    """ numbering
+    """
+    def numbering(self, u, visited, stack):
+        visited[u] = True
+        for v in self.edges[u]:
+            if not visited[v]:
+                self.numbering(v, visited, stack)
+        stack = stack.append(u)
+        return
+
+
+    """ mcg - determine the minimal closed groups in the graph with no outgoing edges
+    """
+    def mcg(self):
+        stack = []
+        visited = [False] * (self.n + 1)
+        visited[0] = None
+
+        for u in range(1, self.n +1):
+            if not visited[u]:
+                self.numbering(u, visited, stack)
         
+        self.transpose()
+
+        visited = [False] * (self.n + 1)
+        while len(stack) > 0:
+            currentMCG = []
+            u = stack.pop(0)
+            if not visited[u]:
+                self.dfs(u, visited, currentMCG)
+                self.mcgs.append(currentMCG)
+
+        self.transpose()
+        return 
+
+        
+    """ contraction - contract the graph on minimal closed groups with no outgoing edges
+    """
+    def contraction(self):
+        return
+
+
     """ sigma - influence function
         :param A - initial set of active nodes
         :return the total number of active nodes at convergence
     """
     def sigma(self, A):
-        
+        # calculate minimal closed groups if required
+        if len(self.mcgs) == 0 and self.n > 0:
+            self.mcg()
 
+        # determine the terminating groups with no outgoing edges
+        TG = []
+        for group in self.mcgs:
+            flag = True
+            for u in group:
+                # determine if there is an edge going outside the minimal closed group
+                for v in self.edges[u]:
+                    if v not in group:
+                        flag = False
+                        break
+                if not flag:
+                    break
+            if flag:
+                TG.append(group)
+
+        # determine the nodes not in a terminating group
+        temp = set([item for group in TG for item in group])
+        R = [i for i in range(1, self.n + 1) if i not in temp]
+
+        # activate the nodes in the terminating groups
+        A = set(A)
+        for group in TG:
+            for node in group:
+                if node in A:
+                    self.beliefs[node] = 1
+        
+        # calculate the consesnus reached by each terminating group
+        for group in TG:
+            group.sort()
+            beliefVector = np.array([self.beliefs[i] for i in group])
+            T = []
+            for i in range(len(group)):
+                temp = [0] * len(group)
+                T.append(temp)
+
+            for i in range(len(group)):
+                for j in range(len(group)):
+                    if group[j] in self.edges[group[i]]:
+                        T[i][j] = self.edges[group[i]][group[j]]
+            
+            T = np.array(T)
+            eigvals, eigvecs = np.linalg.eig(T.T)
+
+            idx = np.where(np.isclose(eigvals, 1))[0][0]
+            left_eigvec = eigvecs[:, idx].real
+
+            # Normalize the left eigenvector
+            left_eigvec = left_eigvec / np.sum(left_eigvec)
+
+            print("Left eigenvector:", left_eigvec)
+            
+            consensus = np.dot(beliefVector, left_eigvec)
+            print("beliefs: ", beliefVector)
+            print("consensus: ", consensus)
+
+        # solve system of linear equations
 
         return 0
     
@@ -117,6 +236,11 @@ class HRCGraph:
     
     def getBeliefs(self):
         return self.beliefs.values()
+    
+    def getMCGs(self):
+        if len(self.mcgs) == 0 and self.n > 0:
+            self.mcg()
+        return self.mcgs
 
     def __str__(self):
         return "Vertices: " + str(self.vertices) + "\nEdges: " + str(self.edges)
@@ -126,9 +250,8 @@ def main():
     # TODO: maybe test the results for different rewiring probability and homophily factor
     G = HRCGraph(3, 2, 0.5, 0.5)
     print(G)
-    G.transpose()
-    print(G)
-
+    print(G.getMCGs())
+    G.sigma([])
     return
 
 if __name__ == '__main__':
