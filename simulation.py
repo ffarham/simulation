@@ -22,7 +22,7 @@ class HRCGraph:
         self.mcgs = []
 
         # create edge set for clique with self loops
-        for i in range(1, self.n+1):
+        for i in range(1, len(self.vertices)+1):
             a = ((i-1) // k) * k if i % k == 0 else (i // k) * k
             b = a + k
             N = dict()
@@ -42,11 +42,9 @@ class HRCGraph:
             
             self.edges[i] = N
 
-            # ensure they sum to 1
-
         
         # initialise the thresholds + beliefs
-        for i in range(1, self.n + 1):
+        for i in range(1, len(self.vertices) + 1):
             self.thresholds[i] = random.uniform(0,1)
             self.beliefs[i] = random.uniform(0,1)
         
@@ -60,9 +58,9 @@ class HRCGraph:
                 # do not rewire the self-loops
                 if u == v: continue
                 
-                x = random.randint(1, self.n)
+                x = random.randint(1, len(self.vertices))
                 while(x == v):
-                    x = random.randint(1, self.n)
+                    x = random.randint(1, len(self.vertices))
                 
                 r = None
                 # if both nodes u and v have the same belief
@@ -130,16 +128,16 @@ class HRCGraph:
     """
     def mcg(self):
         stack = []
-        visited = [False] * (self.n + 1)
+        visited = [False] * (len(self.vertices) + 1)
         visited[0] = None
 
-        for u in range(1, self.n +1):
+        for u in range(1, len(self.vertices) +1):
             if not visited[u]:
                 self.numbering(u, visited, stack)
         
         self.transpose()
 
-        visited = [False] * (self.n + 1)
+        visited = [False] * (len(self.vertices) + 1)
         while len(stack) > 0:
             currentMCG = []
             u = stack.pop(0)
@@ -162,8 +160,10 @@ class HRCGraph:
         :return the total number of active nodes at convergence
     """
     def sigma(self, A):
+        output = 0
+
         # calculate minimal closed groups if required
-        if len(self.mcgs) == 0 and self.n > 0:
+        if len(self.mcgs) == 0 and len(self.vertices) > 0:
             self.mcg()
 
         # determine the terminating groups with no outgoing edges
@@ -183,7 +183,7 @@ class HRCGraph:
 
         # determine the nodes not in a terminating group
         temp = set([item for group in TG for item in group])
-        R = [i for i in range(1, self.n + 1) if i not in temp]
+        R = [i for i in range(1, len(self.vertices) + 1) if i not in temp]
 
         # activate the nodes in the terminating groups
         A = set(A)
@@ -206,20 +206,84 @@ class HRCGraph:
                     if group[j] in self.edges[group[i]]:
                         T[i][j] = self.edges[group[i]][group[j]]
             
+            # ensure matrix T is row stochastic
+            for i, row in enumerate(T):
+                total = sum(row)
+                for j, element in enumerate(row):
+                    T[i][j] = round(element / total, 4)
+                newTotal = sum(T[i])
+                if newTotal != 1:
+                    e = 1 - newTotal
+                    T[i][i] += e
+            
+            # get eigen vector and corresponding eigen value
             T = np.array(T)
-            eigvals, eigvecs = np.linalg.eig(T.T)
+            eigenValues, eigenVectors = np.linalg.eig(T.T)
 
-            idx = np.where(np.isclose(eigvals, 1))[0][0]
-            left_eigvec = eigvecs[:, idx].real
+            # find eigen vector corresponding to eigen value 1
+            index = np.where(np.isclose(eigenValues, 1))[0][0]
+            leftEigenVector = eigenVectors[:, index].real
 
             # Normalize the left eigenvector
-            left_eigvec = left_eigvec / np.sum(left_eigvec)
-
-            print("Left eigenvector:", left_eigvec)
+            leftEigenVector = leftEigenVector / np.sum(leftEigenVector)
             
-            consensus = np.dot(beliefVector, left_eigvec)
-            print("beliefs: ", beliefVector)
-            print("consensus: ", consensus)
+            # calculate the consensus reached by the minimal closed group
+            consensus = np.dot(beliefVector, leftEigenVector)
+            
+            # keep track of any activated nodes
+            for node in group:
+                if consensus >= self.thresholds[node]:
+                    output += 1
+
+            # contract the minimal closed group
+            # remove the edges within the minimal closed group
+            for u in group:
+                for v in group:
+                    if v in self.edges[u]:
+                        del self.edges[u][v]
+            
+            # create supervertex
+            sv = self.n + 1
+            self.n += 1
+
+            # add self-loop to the supervertex
+            self.edges[sv] = dict()
+            self.edges[sv][sv] = 1
+
+            # rewire any edge connected to minimal closed group to the supervertex
+            for u in R:
+                for v in group:
+                    # NOTE: by property of TG, there are no outgoing edges in the group
+                    # incoming edges to minimal closed group: (u,v)
+                    if v in self.edges[u]:
+                        # check if an edge to supervertex already exists
+                        if sv not in self.edges[u]:
+                            self.edges[u][sv] = 0
+                        
+                        self.edges[u][sv] += self.edges[u][v]
+
+                        del self.edges[u][v]          
+
+            # clean up the edge set
+            cuNodes = list(self.edges.keys())
+            for node in cuNodes:
+                if not self.edges[node]:
+                    del self.edges[node]
+
+            # update the vector of beliefs 
+            self.beliefs[sv] = consensus
+            for node in group:
+                del self.beliefs[node]
+
+            # remove each node in the group
+            while len(group) > 0:
+                node = group.pop(0)
+                self.vertices.remove(node)
+
+            # add supervertex to the vertices
+            self.vertices.append(sv)
+
+        
 
         # solve system of linear equations
 
@@ -238,7 +302,7 @@ class HRCGraph:
         return self.beliefs.values()
     
     def getMCGs(self):
-        if len(self.mcgs) == 0 and self.n > 0:
+        if len(self.mcgs) == 0 and len(self.vertices) > 0:
             self.mcg()
         return self.mcgs
 
@@ -250,8 +314,10 @@ def main():
     # TODO: maybe test the results for different rewiring probability and homophily factor
     G = HRCGraph(3, 2, 0.5, 0.5)
     print(G)
-    print(G.getMCGs())
+    print()
     G.sigma([])
+    print()
+    print(G)
     return
 
 if __name__ == '__main__':
