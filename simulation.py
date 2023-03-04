@@ -1,22 +1,23 @@
 import random
 import numpy as np
+import logging
 
 """
     HRCGraph - class for Homophilic Relaxed Caveman Graph
 """
 class HRCGraph:
 
-    """ constructor
+    """ constructor - generate a graph
         :param l - number of cliques
-        :param k - size of each clique
+        :param s - size of each clique
         :param p - rewire probability
         :param h - homophily factor
     """
-    def __init__(self, l, k, p, h):
+    def __init__(self, l, s, p, h):
 
-        self.n = l * k
-        self.m = k * (k-1) * k * l
-        self.vertices = [i for i in range(1, (l*k) + 1)]
+        self.n = l * s
+        self.m = s * (s-1) * s * l
+        self.vertices = [i for i in range(1, (l*s) + 1)]
         self.edges = dict()
         self.thresholds = dict()
         self.beliefs = dict()
@@ -24,8 +25,8 @@ class HRCGraph:
 
         # create edge set for clique with self loops
         for i in range(1, len(self.vertices)+1):
-            a = ((i-1) // k) * k if i % k == 0 else (i // k) * k
-            b = a + k
+            a = ((i-1) // s) * s if i % s == 0 else (i // s) * s
+            b = a + s
             N = dict()
             for j in range(a+1, b+1):
                 N[j] = random.uniform(0.01, 1.0)
@@ -65,59 +66,64 @@ class HRCGraph:
                 
                 r = None
                 # if both nodes u and v have the same belief
-                if ((self.beliefs[u] >= self.thresholds[u] and self.beliefs[v] >= self.thresholds[v]) or (self.beliefs[u] < self.thresholds[u] and self.beliefs[v] < self.thresholds[v])):
-                    r = p * h
-                else:
-                    r = p * (1 - h)
+                if (self.sameColour(u, v)): r = p * h
+                else: r = p * (1 - h)
 
                 # rewire with probability r
                 if random.uniform(0,1) <= r:
-                    if x in self.edges[u]:
-                        self.edges[u][x] += self.edges[u][v]
-                    else:
-                        self.edges[u][x] = self.edges[u][v]
+                    if x in self.edges[u]: self.edges[u][x] += self.edges[u][v]
+                    else: self.edges[u][x] = self.edges[u][v]
 
                     del self.edges[u][v]
     
 
-    """ transpose - method to transpose the edges in the graph
+    """ sameColour - determine if 2 nodes have the same opinion
+        - that is their belief either both exceeds their respective thresholds or they dont
+    """
+    def sameColour(self, u, v):
+        return (self.beliefs[u] >= self.thresholds[u] and self.beliefs[v] >= self.thresholds[v]) or (self.beliefs[u] < self.thresholds[u] and self.beliefs[v] < self.thresholds[v])
+
+
+    """ transpose - method to reverse the edges in the graph
         - creates a new dictionary of edges
     """
     def transpose(self):
+        if len(self.edges) == 0:
+            logging.warning("found empty edge set when atttempting to transpose")
+            return 
+
         newE = {}
         for i in self.edges:
-            for j in self.edges[i]:
-                
-                if j not in newE:
-                    newE[j] = {}
+            for j in self.edges[i]:  
+                if j not in newE: newE[j] = {}
 
                 newE[j][i] = self.edges[i][j]
 
         self.edges = newE
 
     
-    """ dfs
+    """ dfs - perform DFS to determine minimal closed groups
     """
     def dfs(self, u, visited, currentMCG):
         visited[u] = True
         currentMCG.append(u)
         for v in self.edges[u]:
-            if not visited[v]:
-                self.dfs(v, visited, currentMCG)
+            if not visited[v]: self.dfs(v, visited, currentMCG)
     
 
-    """ numbering
+    """ dfsNumbering - number the nodes in the network by adding them to the stack
+        - used to get the order of nodes to perform the DFS that determines minimal closed groups
     """
-    def numbering(self, u, visited, stack):
+    def dfsNumbering(self, u, visited, stack):
         visited[u] = True
         for v in self.edges[u]:
-            if not visited[v]:
-                self.numbering(v, visited, stack)
+            if not visited[v]: self.dfsNumbering(v, visited, stack)
         stack = stack.append(u)
         return
 
 
-    """ mcg - determine the minimal closed groups in the graph with no outgoing edges
+    """ mcg - determines the minimal closed groups in the graph with no outgoing edges
+        - Kosaraju's algorithm: first perform DFS numbering on nodes and use that numbering as an order of nodes to traverse using DFS, each traversal traverses a minimal closed group
     """
     def mcg(self):
         stack = []
@@ -125,8 +131,7 @@ class HRCGraph:
         visited[0] = None
 
         for u in range(1, len(self.vertices) + 1):
-            if not visited[u]:
-                self.numbering(u, visited, stack)
+            if not visited[u]: self.dfsNumbering(u, visited, stack)
         
         self.transpose()
 
@@ -144,9 +149,103 @@ class HRCGraph:
 
         
     """ contraction - contract the graph on minimal closed groups with no outgoing edges
+        :param mcg - minimal closed group to contract
+        :param consensus - the consensus belief reached by the minimal closed group
+        :param R - nodes outside of all terminating groups (minimal closed groups with no outgoing edges)
     """
-    def contraction(self):
-        return
+    def contract(self, mcg, consensus, R):
+        # remove the edges within the minimal closed group
+        for u in mcg:
+            for v in mcg:
+                if v in self.edges[u]: del self.edges[u][v]
+        
+        # create supervertex
+        sv = self.n + 1
+        self.n += 1
+
+        # add self-loop to the supervertex
+        self.edges[sv] = dict()
+        self.edges[sv][sv] = 1
+
+        # rewire any edge connected to minimal closed group to the supervertex
+        for u in R:
+            for v in mcg:
+                # NOTE: by property of TG, there are no outgoing edges in the minimal closed group
+                # incoming edges to minimal closed group: (u,v)
+                if v in self.edges[u]:
+                    # check if an edge to supervertex already exists
+                    if sv not in self.edges[u]: self.edges[u][sv] = 0
+                    
+                    self.edges[u][sv] += self.edges[u][v]
+
+                    del self.edges[u][v]          
+
+        # clean up the edge set
+        cuNodes = list(self.edges.keys())
+        for node in cuNodes:
+            if not self.edges[node]: del self.edges[node]
+
+        # update the vector of beliefs 
+        self.beliefs[sv] = consensus
+        for node in mcg:
+            del self.beliefs[node]
+
+        # remove each node in the minimal closed group
+        while len(mcg) > 0:
+            node = mcg.pop(0)
+            self.vertices.remove(node)
+
+        # add supervertex to the vertices
+        self.vertices.append(sv)
+
+    
+    """ calculateConsensus - function to calculate the consensus belief reached by a minimal closed group
+        :param mcg - minimal closed group to calculate the consensus belief of
+        :param A_0 - the initial active set of nodes
+    """
+    def calculateConsensus(self, mcg, A_0):
+        # activate the nodes in the terminating groups
+        A_0 = set(A_0)
+        for node in mcg:
+            if node in A_0: self.beliefs[node] = 1
+        
+        # calculate the consesnus reached by each terminating group
+        mcg.sort()
+        beliefVector = np.array([self.beliefs[i] for i in mcg])
+        T = []
+        for i in range(len(mcg)):
+            temp = [0] * len(mcg)
+            T.append(temp)
+
+        for i in range(len(mcg)):
+            for j in range(len(mcg)):
+                if mcg[j] in self.edges[mcg[i]]: T[i][j] = self.edges[mcg[i]][mcg[j]]
+        
+        # ensure matrix T is row stochastic
+        for i, row in enumerate(T):
+            total = sum(row)
+            for j, element in enumerate(row):
+                T[i][j] = round(element / total, 4)
+            newTotal = sum(T[i])
+            if newTotal != 1:
+                e = 1 - newTotal
+                T[i][i] += e
+        
+        # get eigen vector and corresponding eigen value
+        T = np.array(T)
+        eigenValues, eigenVectors = np.linalg.eig(T.T)
+
+        # find eigen vector corresponding to eigen value 1
+        index = np.where(np.isclose(eigenValues, 1))[0][0]
+        leftEigenVector = eigenVectors[:, index].real
+
+        # Normalize the left eigenvector
+        leftEigenVector = leftEigenVector / np.sum(leftEigenVector)
+        
+        # calculate the consensus reached by the minimal closed group
+        consensus = np.dot(beliefVector, leftEigenVector)
+
+        return consensus
 
 
     """ sigma - influence function
@@ -157,8 +256,7 @@ class HRCGraph:
         output = 0
 
         # calculate minimal closed groups if required
-        if len(self.mcgs) == 0 and len(self.vertices) > 0:
-            self.mcg()    
+        if len(self.mcgs) == 0 and len(self.vertices) > 0: self.mcg()    
 
         # determine the terminating groups with no outgoing edges
         TG = []
@@ -170,115 +268,28 @@ class HRCGraph:
                     if v not in group:
                         flag = False
                         break
-                if not flag:
-                    break
-            if flag:
-                TG.append(group)
+                if not flag: break
+
+            if flag: TG.append(group)
 
         # determine the nodes not in a terminating group
         temp = set([item for group in TG for item in group])
         R = [i for i in range(1, len(self.vertices) + 1) if i not in temp]
 
-        # activate the nodes in the terminating groups
-        A_0 = set(A_0)
-        for group in TG:
-            for node in group:
-                if node in A_0:
-                    self.beliefs[node] = 1
         
-        # calculate the consesnus reached by each terminating group
         for group in TG:
-            group.sort()
-            beliefVector = np.array([self.beliefs[i] for i in group])
-            T = []
-            for i in range(len(group)):
-                temp = [0] * len(group)
-                T.append(temp)
+            # calculate consensus reached by each terminating group + keep track of activated nodes withing
+            consensus = self.calculateConsensus(group, A_0)
 
-            for i in range(len(group)):
-                for j in range(len(group)):
-                    if group[j] in self.edges[group[i]]:
-                        T[i][j] = self.edges[group[i]][group[j]]
-            
-            # ensure matrix T is row stochastic
-            for i, row in enumerate(T):
-                total = sum(row)
-                for j, element in enumerate(row):
-                    T[i][j] = round(element / total, 4)
-                newTotal = sum(T[i])
-                if newTotal != 1:
-                    e = 1 - newTotal
-                    T[i][i] += e
-            
-            # get eigen vector and corresponding eigen value
-            T = np.array(T)
-            eigenValues, eigenVectors = np.linalg.eig(T.T)
-
-            # find eigen vector corresponding to eigen value 1
-            index = np.where(np.isclose(eigenValues, 1))[0][0]
-            leftEigenVector = eigenVectors[:, index].real
-
-            # Normalize the left eigenvector
-            leftEigenVector = leftEigenVector / np.sum(leftEigenVector)
-            
-            # calculate the consensus reached by the minimal closed group
-            consensus = np.dot(beliefVector, leftEigenVector)
-            
             # keep track of any activated nodes
             for node in group:
-                if consensus >= self.thresholds[node]:
-                    output += 1
+                if consensus >= self.thresholds[node]: output += 1
 
-            # contract the minimal closed group
-            # remove the edges within the minimal closed group
-            for u in group:
-                for v in group:
-                    if v in self.edges[u]:
-                        del self.edges[u][v]
-            
-            # create supervertex
-            sv = self.n + 1
-            self.n += 1
+            # contract the graph on the minimal closed group
+            self.contract(group, consensus, R)
 
-            # add self-loop to the supervertex
-            self.edges[sv] = dict()
-            self.edges[sv][sv] = 1
-
-            # rewire any edge connected to minimal closed group to the supervertex
-            for u in R:
-                for v in group:
-                    # NOTE: by property of TG, there are no outgoing edges in the group
-                    # incoming edges to minimal closed group: (u,v)
-                    if v in self.edges[u]:
-                        # check if an edge to supervertex already exists
-                        if sv not in self.edges[u]:
-                            self.edges[u][sv] = 0
-                        
-                        self.edges[u][sv] += self.edges[u][v]
-
-                        del self.edges[u][v]          
-
-            # clean up the edge set
-            cuNodes = list(self.edges.keys())
-            for node in cuNodes:
-                if not self.edges[node]:
-                    del self.edges[node]
-
-            # update the vector of beliefs 
-            self.beliefs[sv] = consensus
-            for node in group:
-                del self.beliefs[node]
-
-            # remove each node in the group
-            while len(group) > 0:
-                node = group.pop(0)
-                self.vertices.remove(node)
-
-            # add supervertex to the vertices
-            self.vertices.append(sv)
-
-        if len(R) == 0: 
-            return output
+        # if all nodes belong to some minimal closed group
+        if len(R) == 0: return output
 
         # still need to calculate convergent belief of each node in R -> solve system of linear equations
         # define a matrix of co-efficients
@@ -289,8 +300,7 @@ class HRCGraph:
         
         for i, u in enumerate(self.vertices):
             for j, v in enumerate(self.vertices):
-                if v in self.edges[u]:
-                    A[i][j] = self.edges[u][v]
+                if v in self.edges[u]: A[i][j] = self.edges[u][v]
         A = np.array(A)
 
         # converge A to some epsilon accuracy
@@ -299,7 +309,7 @@ class HRCGraph:
         A = np.linalg.matrix_power(A, 2)
         while (np.sum(np.abs(A - prev)) > epsilon):
             if counter > 100: 
-                print("WARNING: hit counter limit")
+                logging.warning("counter limit hit during computing convergence")
                 break
             prev = A
             A = np.linalg.matrix_power(A, 2)
@@ -312,8 +322,7 @@ class HRCGraph:
 
         # count the number of vertices in R that get activated
         for i, r in enumerate(R):
-            if c[i] >= self.thresholds[r]:
-                output += 1
+            if c[i] >= self.thresholds[r]: output += 1
         
         return output
 
@@ -341,11 +350,10 @@ class HRCGraph:
 
 def main():
     # TODO: maybe test the results for different rewiring probability and homophily factor
-    G = HRCGraph(3, 2, 0.5, 0.5)
+    G = HRCGraph(10, 10, 1, 0)
     sig = G.sigma([])
-
-    print("Total activations: ", sig)
+    print("\nTotal activations: ", sig)
     return
 
 if __name__ == '__main__':
-    main()
+    main() 
