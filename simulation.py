@@ -13,6 +13,7 @@ class HRCGraph:
         :param h - homophily factor
     """
     def __init__(self, l, k, p, h):
+
         self.n = l * k
         self.m = k * (k-1) * k * l
         self.vertices = [i for i in range(1, (l*k) + 1)]
@@ -80,28 +81,20 @@ class HRCGraph:
     
 
     """ transpose - method to transpose the edges in the graph
+        - creates a new dictionary of edges
     """
     def transpose(self):
-        visited = set()
+        newE = {}
         for i in self.edges:
-            queue =  list(self.edges[i].keys())
-            while(len(queue) > 0):
-                j = queue.pop(0)
-
-                if j in visited: continue
-
-                w_ij = self.edges[i][j]
-                w_ji = self.edges[j][i] if i in self.edges[j] else None 
+            for j in self.edges[i]:
                 
-                self.edges[j][i] = w_ij
+                if j not in newE:
+                    newE[j] = {}
 
-                if w_ji is not None:
-                    self.edges[i][j] = w_ji
-                else:
-                    del self.edges[i][j]
+                newE[j][i] = self.edges[i][j]
 
-            visited.add(i)
-        return
+        self.edges = newE
+
     
     """ dfs
     """
@@ -131,7 +124,7 @@ class HRCGraph:
         visited = [False] * (len(self.vertices) + 1)
         visited[0] = None
 
-        for u in range(1, len(self.vertices) +1):
+        for u in range(1, len(self.vertices) + 1):
             if not visited[u]:
                 self.numbering(u, visited, stack)
         
@@ -140,12 +133,13 @@ class HRCGraph:
         visited = [False] * (len(self.vertices) + 1)
         while len(stack) > 0:
             currentMCG = []
-            u = stack.pop(0)
+            u = stack.pop()
             if not visited[u]:
                 self.dfs(u, visited, currentMCG)
                 self.mcgs.append(currentMCG)
 
         self.transpose()
+
         return 
 
         
@@ -156,15 +150,15 @@ class HRCGraph:
 
 
     """ sigma - influence function
-        :param A - initial set of active nodes
+        :param A_0 - initial set of active nodes
         :return the total number of active nodes at convergence
     """
-    def sigma(self, A):
+    def sigma(self, A_0):
         output = 0
 
         # calculate minimal closed groups if required
         if len(self.mcgs) == 0 and len(self.vertices) > 0:
-            self.mcg()
+            self.mcg()    
 
         # determine the terminating groups with no outgoing edges
         TG = []
@@ -186,10 +180,10 @@ class HRCGraph:
         R = [i for i in range(1, len(self.vertices) + 1) if i not in temp]
 
         # activate the nodes in the terminating groups
-        A = set(A)
+        A_0 = set(A_0)
         for group in TG:
             for node in group:
-                if node in A:
+                if node in A_0:
                     self.beliefs[node] = 1
         
         # calculate the consesnus reached by each terminating group
@@ -283,11 +277,46 @@ class HRCGraph:
             # add supervertex to the vertices
             self.vertices.append(sv)
 
+        if len(R) == 0: 
+            return output
+
+        # still need to calculate convergent belief of each node in R -> solve system of linear equations
+        # define a matrix of co-efficients
+        A = []
+        for i in range(len(self.vertices)):
+            temp = [0] * len(self.vertices)
+            A.append(temp)
         
+        for i, u in enumerate(self.vertices):
+            for j, v in enumerate(self.vertices):
+                if v in self.edges[u]:
+                    A[i][j] = self.edges[u][v]
+        A = np.array(A)
 
-        # solve system of linear equations
+        # converge A to some epsilon accuracy
+        counter, epsilon = 0, 0.0001
+        prev = A
+        A = np.linalg.matrix_power(A, 2)
+        while (np.sum(np.abs(A - prev)) > epsilon):
+            if counter > 100: 
+                print("WARNING: hit counter limit")
+                break
+            prev = A
+            A = np.linalg.matrix_power(A, 2)
+            counter += 1
+        
+        b = np.array(list(self.beliefs.values()))
+        
+        # calculate the vector of convergent beliefs in G'
+        c = A.dot(b.T)
 
-        return 0
+        # count the number of vertices in R that get activated
+        for i, r in enumerate(R):
+            if c[i] >= self.thresholds[r]:
+                output += 1
+        
+        return output
+
     
     def getVertices(self):
         return self.vertices
@@ -313,11 +342,9 @@ class HRCGraph:
 def main():
     # TODO: maybe test the results for different rewiring probability and homophily factor
     G = HRCGraph(3, 2, 0.5, 0.5)
-    print(G)
-    print()
-    G.sigma([])
-    print()
-    print(G)
+    sig = G.sigma([])
+
+    print("Total activations: ", sig)
     return
 
 if __name__ == '__main__':
