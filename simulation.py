@@ -126,6 +126,7 @@ class HRCGraph:
         - Kosaraju's algorithm: first perform DFS numbering on nodes and use that numbering as an order of nodes to traverse using DFS, each traversal traverses a minimal closed group
     """
     def mcg(self):
+        logging.info("determining minimal closed groups in the network")
         stack = []
         visited = [False] * (len(self.vertices) + 1)
         visited[0] = None
@@ -148,15 +149,16 @@ class HRCGraph:
         return 
 
         
-    """ contraction - contract the graph on minimal closed groups with no outgoing edges
-        :param mcg - minimal closed group to contract
-        :param consensus - the consensus belief reached by the minimal closed group
-        :param R - nodes outside of all terminating groups (minimal closed groups with no outgoing edges)
+    """ contraction - contract the graph on terminating group (minimal closed groups with no outgoing edges)
+        :param tg - termianting group to contract
+        :param consensus - the consensus belief reached by the terminating group
+        :param R - nodes outside of all terminating groups 
     """
-    def contract(self, mcg, consensus, R):
+    def contract(self, tg, consensus, R):
+        logging.info("contracting terminating groups")
         # remove the edges within the minimal closed group
-        for u in mcg:
-            for v in mcg:
+        for u in tg:
+            for v in tg:
                 if v in self.edges[u]: del self.edges[u][v]
         
         # create supervertex
@@ -169,7 +171,7 @@ class HRCGraph:
 
         # rewire any edge connected to minimal closed group to the supervertex
         for u in R:
-            for v in mcg:
+            for v in tg:
                 # NOTE: by property of TG, there are no outgoing edges in the minimal closed group
                 # incoming edges to minimal closed group: (u,v)
                 if v in self.edges[u]:
@@ -187,12 +189,12 @@ class HRCGraph:
 
         # update the vector of beliefs 
         self.beliefs[sv] = consensus
-        for node in mcg:
+        for node in tg:
             del self.beliefs[node]
 
         # remove each node in the minimal closed group
-        while len(mcg) > 0:
-            node = mcg.pop(0)
+        while len(tg) > 0:
+            node = tg.pop(0)
             self.vertices.remove(node)
 
         # add supervertex to the vertices
@@ -202,6 +204,7 @@ class HRCGraph:
     """ calculateConsensus - function to calculate the consensus belief reached by a minimal closed group
         :param mcg - minimal closed group to calculate the consensus belief of
         :param A_0 - the initial active set of nodes
+        :return the consensus belief 
     """
     def calculateConsensus(self, mcg, A_0):
         # activate the nodes in the terminating groups
@@ -253,6 +256,7 @@ class HRCGraph:
         :return the total number of active nodes at convergence
     """
     def sigma(self, A_0):
+        logging.info("activation function called")
         output = 0
 
         # calculate minimal closed groups if required
@@ -349,6 +353,8 @@ class HRCGraph:
 
 
 def main():
+    logging.basicConfig(level=logging.INFO)
+    
     # TODO: maybe test the results for different rewiring probability and homophily factor
     G = HRCGraph(10, 10, 1, 0)
     sig = G.sigma([])
