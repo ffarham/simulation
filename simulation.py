@@ -1,6 +1,7 @@
 import random
 import numpy as np
 import logging
+import sys
 
 """
     HRCGraph - class for Homophilic Relaxed Caveman Graph
@@ -10,18 +11,26 @@ class HRCGraph:
     """ constructor - generate a graph
         :param l - number of cliques
         :param s - size of each clique
-        :param p - rewire probability
-        :param h - homophily factor
+        :param p - rewiring probability
     """
-    def __init__(self, l, s, p, h):
+    def __init__(self, l, s, p):
 
         self.n = l * s
         self.m = s * (s-1) * s * l
         self.vertices = [i for i in range(1, (l*s) + 1)]
         self.edges = dict()
         self.thresholds = dict()
-        self.beliefs = dict()
-        self.mcgs = []
+        self.initBeliefs = dict()
+        self.split = False
+        self.reShape = False
+        self.activations = 0
+        self.contracted_node_initBeliefs = dict()
+        self.contracted_node_thresholds = dict()
+        self.mapSVtoVs = dict()
+        self.mapSVtoSs = dict()
+        self.terminating_groups = []
+        self.terminals = []
+        self.non_terminals = []
 
         # create edge set for clique with self loops
         for i in range(1, len(self.vertices)+1):
@@ -44,11 +53,9 @@ class HRCGraph:
             
             self.edges[i] = N
 
-        
-        # initialise the thresholds + beliefs
-        for i in range(1, len(self.vertices) + 1):
-            self.thresholds[i] = random.uniform(0,1)
-            self.beliefs[i] = random.uniform(0,1)
+        for node in self.vertices:
+            self.thresholds[node] = random.uniform(0,1)
+            self.initBeliefs[node] = 0 # random.uniform(0,1)
         
         # rewire the edges
         for u in self.edges:
@@ -63,31 +70,19 @@ class HRCGraph:
                 x = random.randint(1, len(self.vertices))
                 while(x == v):
                     x = random.randint(1, len(self.vertices))
-                
-                r = None
-                # if both nodes u and v have the same belief
-                if (self.sameColour(u, v)): r = p * h
-                else: r = p * (1 - h)
 
-                # rewire with probability r
-                if random.uniform(0,1) <= r:
+                # rewire with probability p
+                if random.uniform(0,1) <= p:
                     if x in self.edges[u]: self.edges[u][x] += self.edges[u][v]
                     else: self.edges[u][x] = self.edges[u][v]
 
                     del self.edges[u][v]
-    
-
-    """ sameColour - determine if 2 nodes have the same opinion
-        - that is their belief either both exceeds their respective thresholds or they dont
-    """
-    def sameColour(self, u, v):
-        return (self.beliefs[u] >= self.thresholds[u] and self.beliefs[v] >= self.thresholds[v]) or (self.beliefs[u] < self.thresholds[u] and self.beliefs[v] < self.thresholds[v])
 
 
     """ transpose - method to reverse the edges in the graph
         - creates a new dictionary of edges
     """
-    def transpose(self):
+    def __transpose(self):
         if len(self.edges) == 0:
             logging.warning("found empty edge set when atttempting to transpose")
             return 
@@ -104,58 +99,80 @@ class HRCGraph:
     
     """ dfs - perform DFS to determine minimal closed groups
     """
-    def dfs(self, u, visited, currentMCG):
-        visited[u] = True
+    def __dfs(self, u, visited, currentMCG):
+        visited.add(u)
         currentMCG.append(u)
         for v in self.edges[u]:
-            if not visited[v]: self.dfs(v, visited, currentMCG)
+            if v not in visited: self.__dfs(v, visited, currentMCG)
     
 
     """ dfsNumbering - number the nodes in the network by adding them to the stack
         - used to get the order of nodes to perform the DFS that determines minimal closed groups
     """
-    def dfsNumbering(self, u, visited, stack):
-        visited[u] = True
+    def __dfsNumbering(self, u, visited, stack):
+        visited.add(u)
         for v in self.edges[u]:
-            if not visited[v]: self.dfsNumbering(v, visited, stack)
+            if v not in visited: self.__dfsNumbering(v, visited, stack)
         stack = stack.append(u)
-        return
 
 
-    """ mcg - determines the minimal closed groups in the graph with no outgoing edges
+    """ getMCGs - determines the minimal closed groups in the graph with no outgoing edges
         - Kosaraju's algorithm: first perform DFS numbering on nodes and use that numbering as an order of nodes to traverse using DFS, each traversal traverses a minimal closed group
     """
-    def mcg(self):
+    def __getMCGs(self):
         logging.info("determining minimal closed groups in the network")
         stack = []
-        visited = [False] * (len(self.vertices) + 1)
-        visited[0] = None
+        visited = set()
 
         for u in range(1, len(self.vertices) + 1):
-            if not visited[u]: self.dfsNumbering(u, visited, stack)
+            if u not in visited: self.__dfsNumbering(u, visited, stack)
         
-        self.transpose()
+        self.__transpose()
 
-        visited = [False] * (len(self.vertices) + 1)
+        MCGs = []
+        visited = set()
         while len(stack) > 0:
             currentMCG = []
             u = stack.pop()
-            if not visited[u]:
-                self.dfs(u, visited, currentMCG)
-                self.mcgs.append(currentMCG)
+            if u not in visited:
+                self.__dfs(u, visited, currentMCG)
+                MCGs.append(currentMCG)
 
-        self.transpose()
+        self.__transpose()
+        return MCGs
 
-        return 
+
+    """ splitGraph - determines the terminating groups and non-terminals
+    """
+    def __splitGraph(self):
+        if self.split: return
+
+        logging.info("splitting graph")
+
+        # determine the terminating groups: minimal closed groups with no outgoing edges
+        MCGs = self.__getMCGs()
+        for group in MCGs:
+            flag = True
+            for u in group:
+                for v in self.edges[u]:
+                    if v not in group:
+                        flag = False
+                        break
+                if not flag: break
+
+            if flag: self.terminating_groups.append(group)
+            else: self.non_terminals += group
+        
+        self.split = True
 
         
     """ contraction - contract the graph on terminating group (minimal closed groups with no outgoing edges)
         :param tg - termianting group to contract
         :param consensus - the consensus belief reached by the terminating group
-        :param R - nodes outside of all terminating groups 
     """
-    def contract(self, tg, consensus, R):
-        logging.info("contracting terminating groups")
+    def __contract(self, tg, consensus):
+        logging.info("contracting terminating group")
+
         # remove the edges within the minimal closed group
         for u in tg:
             for v in tg:
@@ -170,7 +187,7 @@ class HRCGraph:
         self.edges[sv][sv] = 1
 
         # rewire any edge connected to minimal closed group to the supervertex
-        for u in R:
+        for u in self.non_terminals:
             for v in tg:
                 # NOTE: by property of TG, there are no outgoing edges in the minimal closed group
                 # incoming edges to minimal closed group: (u,v)
@@ -187,42 +204,32 @@ class HRCGraph:
         for node in cuNodes:
             if not self.edges[node]: del self.edges[node]
 
-        # update the vector of beliefs 
-        self.beliefs[sv] = consensus
+        # remove each node in the minimal closed group from the vertex set
         for node in tg:
-            del self.beliefs[node]
-
-        # remove each node in the minimal closed group
-        while len(tg) > 0:
-            node = tg.pop(0)
             self.vertices.remove(node)
 
         # add supervertex to the vertices
         self.vertices.append(sv)
 
+        return sv
+
     
-    """ calculateConsensus - function to calculate the consensus belief reached by a minimal closed group
-        :param mcg - minimal closed group to calculate the consensus belief of
-        :param A_0 - the initial active set of nodes
-        :return the consensus belief 
+    """ get_influence_vector - function to calculate the influence vector of the given terminating group
+        :param tg - terminating group to calculate the infleunce vector of
+        :return the influence vector
     """
-    def calculateConsensus(self, mcg, A_0):
-        # activate the nodes in the terminating groups
-        A_0 = set(A_0)
-        for node in mcg:
-            if node in A_0: self.beliefs[node] = 1
-        
+    def __getInfluenceVector(self, tg):
         # calculate the consesnus reached by each terminating group
-        mcg.sort()
-        beliefVector = np.array([self.beliefs[i] for i in mcg])
+        tg.sort()
+        beliefVector = np.array([self.initBeliefs[i] for i in tg])
         T = []
-        for i in range(len(mcg)):
-            temp = [0] * len(mcg)
+        for i in range(len(tg)):
+            temp = [0] * len(tg)
             T.append(temp)
 
-        for i in range(len(mcg)):
-            for j in range(len(mcg)):
-                if mcg[j] in self.edges[mcg[i]]: T[i][j] = self.edges[mcg[i]][mcg[j]]
+        for i in range(len(tg)):
+            for j in range(len(tg)):
+                if tg[j] in self.edges[tg[i]]: T[i][j] = self.edges[tg[i]][tg[j]]
         
         # ensure matrix T is row stochastic
         for i, row in enumerate(T):
@@ -245,10 +252,29 @@ class HRCGraph:
         # Normalize the left eigenvector
         leftEigenVector = leftEigenVector / np.sum(leftEigenVector)
         
-        # calculate the consensus reached by the minimal closed group
-        consensus = np.dot(beliefVector, leftEigenVector)
+        return leftEigenVector
 
-        return consensus
+
+    """ reShape - re-shape the graph to fascilitate computing convergence
+        :return the non-terminals 
+    """
+    def reShapeGraph(self):
+        # if graph is already reshaped, return the determined non-terminals
+        if self.reShape: return 
+
+        # split the graph into terminating groups and non terminals if required
+        if not self.split:
+            self.__splitGraph()
+
+        # contract each terminating group 
+        for group in self.terminating_groups:
+            s = self.__getInfluenceVector(group)
+            sv = self.__contract(group, consensus)
+
+            self.mapSVtoVs[sv] = group
+            self.mapSVtoSs[sv] = s
+
+        self.reShape = True
 
 
     """ sigma - influence function
@@ -256,44 +282,16 @@ class HRCGraph:
         :return the total number of active nodes at convergence
     """
     def sigma(self, A_0):
-        logging.info("activation function called")
-        output = 0
-
-        # calculate minimal closed groups if required
-        if len(self.mcgs) == 0 and len(self.vertices) > 0: self.mcg()    
-
-        # determine the terminating groups with no outgoing edges
-        TG = []
-        for group in self.mcgs:
-            flag = True
-            for u in group:
-                # determine if there is an edge going outside the minimal closed group
-                for v in self.edges[u]:
-                    if v not in group:
-                        flag = False
-                        break
-                if not flag: break
-
-            if flag: TG.append(group)
-
-        # determine the nodes not in a terminating group
-        temp = set([item for group in TG for item in group])
-        R = [i for i in range(1, len(self.vertices) + 1) if i not in temp]
-
         
-        for group in TG:
-            # calculate consensus reached by each terminating group + keep track of activated nodes withing
-            consensus = self.calculateConsensus(group, A_0)
+        if not self.reShape: self.reShapeGraph()
 
-            # keep track of any activated nodes
-            for node in group:
-                if consensus >= self.thresholds[node]: output += 1
-
-            # contract the graph on the minimal closed group
-            self.contract(group, consensus, R)
-
+        # TODO: handing activations here
+        # for each supervertex, determine the new convergent belief
+        
         # if all nodes belong to some minimal closed group
-        if len(R) == 0: return output
+        if len(R) == 0: return self.activations
+
+        output = self.activations
 
         # still need to calculate convergent belief of each node in R -> solve system of linear equations
         # define a matrix of co-efficients
@@ -331,6 +329,36 @@ class HRCGraph:
         return output
 
     
+    """ updateThresholds - method to handle threhold randomisation 
+        - also calculates the new subset of nodes that get activated with new threshold values
+        :param A_0 - the new initial active set of nodes
+    """
+    def updateThresholds(self, A_0):
+        self.activations = 0
+        
+        for node in self.thresholds:
+            self.thresholds[node] = random.uniform(0,1)
+        for node in self.contractedNodeThresholds:
+            self.contractedNodeThresholds[node] = random.uniform(0,1)
+
+        for sv in self.terminals:
+            self.activations += self.getContractedNodeActivations(sv, A_0)
+
+
+    """ getCandidates - get the candidates to activate
+        :return the nodes in the terminating groups
+    """
+    def getCandidates(self):
+        if not self.split:
+            self.splitGraph()
+        
+        candidates = []
+        for group in self.terminating_groups:
+            candidates += group
+        
+        return candidates
+
+
     def getVertices(self):
         return self.vertices
 
@@ -342,24 +370,63 @@ class HRCGraph:
     
     def getBeliefs(self):
         return self.beliefs.values()
-    
-    def getMCGs(self):
-        if len(self.mcgs) == 0 and len(self.vertices) > 0:
-            self.mcg()
-        return self.mcgs
 
     def __str__(self):
         return "Vertices: " + str(self.vertices) + "\nEdges: " + str(self.edges)
 
 
 def main():
+    sys.setrecursionlimit(5000)
     logging.basicConfig(level=logging.INFO)
-    
+
     # TODO: maybe test the results for different rewiring probability and homophily factor
-    G = HRCGraph(10, 10, 1, 0)
-    sig = G.sigma([])
-    print("\nTotal activations: ", sig)
+    G = HRCGraph(5, 3, 0.05)
+    G.reShapeGraph()
+    candidates = G.getCandidates()
+    exit(1)
+
+    # candidates = G.getCandidates()
+
+    n = 100
+    A_0 = []
+    total = 0
+    for i in range(n):
+        total += G.sigma(A_0)
+        G.updateThresholds(A_0)
+    print("\nTotal activations: ", total//n)
     return
 
 if __name__ == '__main__':
     main() 
+
+
+# TODO: initialise graph -> get the minimal closed groups -> calc + store consensus reached by TGs -> contract the terminating groups -> return the candidates -> select k candidates s.t. each candidiate increases the sigma function the most 
+#  -> in each of k iterations: you have A_0, run sig function n times on A_0 and average -> in each n iteration, randomise thresholds -> get the activated nodes in the terminating groups + get the activated non-terminals
+
+# getCandidates -> reshape graph to get terminals and non-terminals -> get MCGs -> get TGs -> maintain mapping from SV to TG -> 
+
+# could multi-thread each n iteration
+
+
+
+
+    # """ activateNodes - method to activate nodes in the initial active set
+    # """
+    # def activateNode(self, A_0):
+    #     for node in A_0:
+    #         if node in self.beliefs: self.beliefs[node] = 1
+    #         elif node in self.contractedNodeBeliefs: self.contractedNodeBeliefs[node] = 1
+    #         else: raise Exception("Unknown node to activate")
+
+
+    # """ getContractedNodeActivations - determine the activated nodes that are about to be contracted
+    #     :param sv - supervertex whose corresponding contracted nodes we need to check
+    #     :param A_0 - initial active set of nodes
+    #     :return the total number of activations in the corresponding vertex set
+    # """
+    # def getContractedNodeActivations(self, sv, A_0):
+    #     result = 0
+    #     nodes = self.mapSVtoVs[sv]
+    #     for node in nodes:
+    #         if self.contractedNodeBeliefs[node] >= self.contractedNodeThresholds[node]: result += 1
+    #     return result
