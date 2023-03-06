@@ -2,6 +2,7 @@ import random
 import numpy as np
 import logging
 import sys
+import copy
 
 """
     HRCGraph - class for Homophilic Relaxed Caveman Graph
@@ -21,11 +22,10 @@ class HRCGraph:
         self.edges = dict()
         self.thresholds = dict()
         self.initBeliefs = dict()
+        self.convergentBeliefs = dict()
         self.split = False
         self.reShape = False
         self.activations = 0
-        self.contracted_node_initBeliefs = dict()
-        self.contracted_node_thresholds = dict()
         self.mapSVtoVs = dict()
         self.mapSVtoSs = dict()
         self.terminating_groups = []
@@ -168,9 +168,8 @@ class HRCGraph:
         
     """ contraction - contract the graph on terminating group (minimal closed groups with no outgoing edges)
         :param tg - termianting group to contract
-        :param consensus - the consensus belief reached by the terminating group
     """
-    def __contract(self, tg, consensus):
+    def __contract(self, tg):
         logging.info("contracting terminating group")
 
         # remove the edges within the minimal closed group
@@ -269,8 +268,8 @@ class HRCGraph:
         # contract each terminating group 
         for group in self.terminating_groups:
             s = self.__getInfluenceVector(group)
-            sv = self.__contract(group, consensus)
-
+            sv = self.__contract(group)
+            self.terminals.append(sv)
             self.mapSVtoVs[sv] = group
             self.mapSVtoSs[sv] = s
 
@@ -287,13 +286,34 @@ class HRCGraph:
 
         # TODO: handing activations here
         # for each supervertex, determine the new convergent belief
+
+        # what happens with different A_0s
+        # for each A_0 convergent belief of eahc node is different, so need to recalculate the convergent belief of all supervertices -> to do this, need to maintain the initial vector of beliefs of nodes in termianls
+        # for each sv: we have teh s vector and the nodes in sv and for each of those nodes, we have the initial vector of beliefs
+        # it does not matter if we alter the iniial beliefs of non terminals 
+        # we need to update the convergent belief of sv then calculate convergennt of non terminals
+
+
+        # determine convergent belief of all supervertices
+        for sv in self.terminals:
+            s = self.mapSVtoSs[sv]
+            nodes = self.mapSVtoVs[sv]
+            # create belief vector of desired nodes + any activations
+            p = [self.initBeliefs[x] if x not in A_0 else 1 for x in nodes]
+
+            consensus = np.dot(s, p)
+            self.convergentBeliefs[sv] = consensus
+
+            # determine the nodes activated in the respective terminating group
+            for node in nodes:
+                if consensus >= self.thresholds[node]: self.activations += 1
         
         # if all nodes belong to some minimal closed group
-        if len(R) == 0: return self.activations
+        if len(self.non_terminals) == 0: return self.activations
 
         output = self.activations
 
-        # still need to calculate convergent belief of each node in R -> solve system of linear equations
+        # still need to calculate convergent belief of each non terminals
         # define a matrix of co-efficients
         A = []
         for i in range(len(self.vertices)):
@@ -317,13 +337,13 @@ class HRCGraph:
             A = np.linalg.matrix_power(A, 2)
             counter += 1
         
-        b = np.array(list(self.beliefs.values()))
+        b = np.array([self.initBeliefs[x] if x in self.initBeliefs else self.convergentBeliefs[x] for x in self.vertices])
         
         # calculate the vector of convergent beliefs in G'
         c = A.dot(b.T)
 
         # count the number of vertices in R that get activated
-        for i, r in enumerate(R):
+        for i, r in enumerate(self.non_terminals):
             if c[i] >= self.thresholds[r]: output += 1
         
         return output
@@ -333,16 +353,10 @@ class HRCGraph:
         - also calculates the new subset of nodes that get activated with new threshold values
         :param A_0 - the new initial active set of nodes
     """
-    def updateThresholds(self, A_0):
-        self.activations = 0
+    def updateThresholds(self):
         
         for node in self.thresholds:
             self.thresholds[node] = random.uniform(0,1)
-        for node in self.contractedNodeThresholds:
-            self.contractedNodeThresholds[node] = random.uniform(0,1)
-
-        for sv in self.terminals:
-            self.activations += self.getContractedNodeActivations(sv, A_0)
 
 
     """ getCandidates - get the candidates to activate
@@ -358,19 +372,6 @@ class HRCGraph:
         
         return candidates
 
-
-    def getVertices(self):
-        return self.vertices
-
-    def getEdges(self):
-        return self.edges
-    
-    def getThresholds(self):
-        return self.thresholds.values()
-    
-    def getBeliefs(self):
-        return self.beliefs.values()
-
     def __str__(self):
         return "Vertices: " + str(self.vertices) + "\nEdges: " + str(self.edges)
 
@@ -379,22 +380,21 @@ def main():
     sys.setrecursionlimit(5000)
     logging.basicConfig(level=logging.INFO)
 
-    # TODO: maybe test the results for different rewiring probability and homophily factor
-    G = HRCGraph(5, 3, 0.05)
+    G = HRCGraph(10, 5, 0.05)
     G.reShapeGraph()
     candidates = G.getCandidates()
-    exit(1)
+    
+    activations = G.sigma(candidates[2:6])
+    print(activations)
 
-    # candidates = G.getCandidates()
-
-    n = 100
-    A_0 = []
-    total = 0
-    for i in range(n):
-        total += G.sigma(A_0)
-        G.updateThresholds(A_0)
-    print("\nTotal activations: ", total//n)
-    return
+    # n = 100
+    # A_0 = []
+    # total = 0
+    # for i in range(n):
+    #     total += G.sigma(A_0)
+    #     G.updateThresholds(A_0)
+    # print("\nTotal activations: ", total//n)
+    # return
 
 if __name__ == '__main__':
     main() 
