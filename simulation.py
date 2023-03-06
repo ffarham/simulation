@@ -3,6 +3,10 @@ import numpy as np
 import logging
 import sys
 import copy
+import matplotlib.pyplot as plt
+from matplotlib import cbook
+from matplotlib import cm
+from matplotlib.colors import LightSource
 
 """
     HRCGraph - class for Homophilic Relaxed Caveman Graph
@@ -120,7 +124,6 @@ class HRCGraph:
         - Kosaraju's algorithm: first perform DFS numbering on nodes and use that numbering as an order of nodes to traverse using DFS, each traversal traverses a minimal closed group
     """
     def __getMCGs(self):
-        logging.info("determining minimal closed groups in the network")
         stack = []
         visited = set()
 
@@ -147,8 +150,6 @@ class HRCGraph:
     def __splitGraph(self):
         if self.split: return
 
-        logging.info("splitting graph")
-
         # determine the terminating groups: minimal closed groups with no outgoing edges
         MCGs = self.__getMCGs()
         for group in MCGs:
@@ -170,7 +171,6 @@ class HRCGraph:
         :param tg - termianting group to contract
     """
     def __contract(self, tg):
-        logging.info("contracting terminating group")
 
         # remove the edges within the minimal closed group
         for u in tg:
@@ -284,15 +284,7 @@ class HRCGraph:
         
         if not self.reShape: self.reShapeGraph()
 
-        # TODO: handing activations here
-        # for each supervertex, determine the new convergent belief
-
-        # what happens with different A_0s
-        # for each A_0 convergent belief of eahc node is different, so need to recalculate the convergent belief of all supervertices -> to do this, need to maintain the initial vector of beliefs of nodes in termianls
-        # for each sv: we have teh s vector and the nodes in sv and for each of those nodes, we have the initial vector of beliefs
-        # it does not matter if we alter the iniial beliefs of non terminals 
-        # we need to update the convergent belief of sv then calculate convergennt of non terminals
-
+        self.activations = 0
 
         # determine convergent belief of all supervertices
         for sv in self.terminals:
@@ -380,53 +372,56 @@ def main():
     sys.setrecursionlimit(5000)
     logging.basicConfig(level=logging.INFO)
 
-    G = HRCGraph(10, 5, 0.05)
-    G.reShapeGraph()
-    candidates = G.getCandidates()
-    
-    activations = G.sigma(candidates[2:6])
-    print(activations)
+    results = dict()
+    p = 0
+    while p <= 1:
+        p = round(p, 2)
 
-    # n = 100
-    # A_0 = []
-    # total = 0
-    # for i in range(n):
-    #     total += G.sigma(A_0)
-    #     G.updateThresholds(A_0)
-    # print("\nTotal activations: ", total//n)
-    # return
+        G = HRCGraph(100, 10, p)
+        G.reShapeGraph()
+        candidates = G.getCandidates()
+
+        pResults = dict()
+        n = 1000
+        targetSize = 5
+        for k in range(0, targetSize+1, 1):
+            A_0 = []
+            for i in range(k):
+                bestCandidate = None
+                for c in candidates:
+                    temp = A_0 + [c]
+                    activations = G.sigma(temp)
+                    if bestCandidate is None: bestCandidate = (c, activations)
+                    else: bestCandidate = bestCandidate if bestCandidate[1] >= activations else (c, activations)
+                A_0.append(bestCandidate[0])
+
+            total = 0
+            for i in range(n):
+                total += G.sigma(A_0)
+                G.updateThresholds()
+            
+            pResults[k] = total // n
+            
+        results[p] = pResults
+        p += 0.2
+
+    # plot the results
+    fig, axes = plt.subplots(2,3)
+    for i, p in enumerate(list(results.keys())):
+        ix = 0 if i < 3 else 1
+        iy = 0 if i % 3 == 0 else 1 if i % 3 == 1 else 2
+
+        x = list(results[p].keys())
+        y = list(results[p].values())
+        axes[ix,iy].plot(x,y)
+        axes[ix,iy].set_title("Re-wiring probability p = " + str(p))
+    
+    fig.tight_layout()
+    fig.supxlabel('Size of Initial Active Set')
+    fig.supylabel('Size of Resulting Active Set')
+
+    plt.show()
+
 
 if __name__ == '__main__':
     main() 
-
-
-# TODO: initialise graph -> get the minimal closed groups -> calc + store consensus reached by TGs -> contract the terminating groups -> return the candidates -> select k candidates s.t. each candidiate increases the sigma function the most 
-#  -> in each of k iterations: you have A_0, run sig function n times on A_0 and average -> in each n iteration, randomise thresholds -> get the activated nodes in the terminating groups + get the activated non-terminals
-
-# getCandidates -> reshape graph to get terminals and non-terminals -> get MCGs -> get TGs -> maintain mapping from SV to TG -> 
-
-# could multi-thread each n iteration
-
-
-
-
-    # """ activateNodes - method to activate nodes in the initial active set
-    # """
-    # def activateNode(self, A_0):
-    #     for node in A_0:
-    #         if node in self.beliefs: self.beliefs[node] = 1
-    #         elif node in self.contractedNodeBeliefs: self.contractedNodeBeliefs[node] = 1
-    #         else: raise Exception("Unknown node to activate")
-
-
-    # """ getContractedNodeActivations - determine the activated nodes that are about to be contracted
-    #     :param sv - supervertex whose corresponding contracted nodes we need to check
-    #     :param A_0 - initial active set of nodes
-    #     :return the total number of activations in the corresponding vertex set
-    # """
-    # def getContractedNodeActivations(self, sv, A_0):
-    #     result = 0
-    #     nodes = self.mapSVtoVs[sv]
-    #     for node in nodes:
-    #         if self.contractedNodeBeliefs[node] >= self.contractedNodeThresholds[node]: result += 1
-    #     return result
