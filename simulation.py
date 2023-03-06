@@ -4,9 +4,6 @@ import logging
 import sys
 import copy
 import matplotlib.pyplot as plt
-from matplotlib import cbook
-from matplotlib import cm
-from matplotlib.colors import LightSource
 
 """
     HRCGraph - class for Homophilic Relaxed Caveman Graph
@@ -295,13 +292,13 @@ class HRCGraph:
 
             consensus = np.dot(s, p)
             self.convergentBeliefs[sv] = consensus
-
             # determine the nodes activated in the respective terminating group
             for node in nodes:
                 if consensus >= self.thresholds[node]: self.activations += 1
         
         # if all nodes belong to some minimal closed group
         if len(self.non_terminals) == 0: return self.activations
+
 
         output = self.activations
 
@@ -364,6 +361,10 @@ class HRCGraph:
         
         return candidates
 
+
+    def getTerminatingGroups(self):
+        return self.terminating_groups
+
     def __str__(self):
         return "Vertices: " + str(self.vertices) + "\nEdges: " + str(self.edges)
 
@@ -373,31 +374,45 @@ def main():
     logging.basicConfig(level=logging.INFO)
 
     results = dict()
-    p = 0
+
+    # iterate through different re-wiring probability 
+    p = 0.1
     while p <= 1:
         p = round(p, 2)
 
-        G = HRCGraph(100, 10, p)
+        G = HRCGraph(20, 5, p)
         G.reShapeGraph()
         candidates = G.getCandidates()
 
         pResults = dict()
-        n = 1000
+        n = 100
         targetSize = 5
-        for k in range(0, targetSize+1, 1):
-            A_0 = []
-            for i in range(k):
-                bestCandidate = None
-                for c in candidates:
-                    temp = A_0 + [c]
-                    activations = G.sigma(temp)
-                    if bestCandidate is None: bestCandidate = (c, activations)
-                    else: bestCandidate = bestCandidate if bestCandidate[1] >= activations else (c, activations)
-                A_0.append(bestCandidate[0])
 
+        # sizes of initial active sets to go through
+        for k in range(0, targetSize+1, 1):  
             total = 0
+            # iterate n times to calculate average
             for i in range(n):
+
+                # build initial active set of size of k, Have to recreate the initial active set as thresholds get updated and the previously selected nodes may not be the most influential after threshold values are randomised
+                A_0 = []
+                tempCandidates = copy.deepcopy(candidates)
+                for j in range(k):
+
+                    # determine the best candidate to select
+                    bestCandidate = None
+                    for c in tempCandidates:
+                        temp = A_0 + [c]
+                        activations = G.sigma(temp)
+                        if bestCandidate is None: bestCandidate = (c, activations)
+                        else: bestCandidate = bestCandidate if bestCandidate[1] >= activations else (c, activations)
+                    if bestCandidate is not None: 
+                        tempCandidates.remove(bestCandidate[0])
+                        A_0.append(bestCandidate[0])
+                
                 total += G.sigma(A_0)
+
+                # randomise the thresholds
                 G.updateThresholds()
             
             pResults[k] = total // n
@@ -406,6 +421,16 @@ def main():
         p += 0.2
 
     # plot the results
+
+    # code for one fixed re-wiring probability
+    # x = list(results[p].keys())
+    # y = list(results[p].values())
+    # plt.plot(x,y)
+    # plt.xlabel("Size of Initial Active Set")
+    # plt.ylabel("Size of Resulting Active Set")
+    # plt.title("Re-wiring probability p = " + str(p))
+
+    # code for multiple re-wiring probabilities
     fig, axes = plt.subplots(2,3)
     for i, p in enumerate(list(results.keys())):
         ix = 0 if i < 3 else 1
