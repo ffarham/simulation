@@ -315,6 +315,7 @@ class HRCGraph:
         A = np.array(A)
 
         # converge A to some epsilon accuracy
+        # TODO: test the cimulation on some fixed num. of iterations for all instances of A
         counter, epsilon = 0, 0.0001
         prev = A
         A = np.linalg.matrix_power(A, 2)
@@ -376,7 +377,9 @@ def main():
     results = dict()
 
     # iterate through different re-wiring probability 
-    p = 0.1
+    p = 0
+    # ps = [0.05, 0.15]
+    # for p in ps:
     while p <= 1:
         p = round(p, 2)
 
@@ -385,7 +388,8 @@ def main():
         candidates = G.getCandidates()
 
         pResults = dict()
-        n = 100
+        # NOTE: can increase the n value for better prediction. Results were simulated on n = 1000
+        n = 1
         targetSize = 5
 
         # sizes of initial active sets to go through
@@ -430,20 +434,45 @@ def main():
     # plt.ylabel("Size of Resulting Active Set")
     # plt.title("Re-wiring probability p = " + str(p))
 
-    # code for multiple re-wiring probabilities
-    fig, axes = plt.subplots(2,3)
-    for i, p in enumerate(list(results.keys())):
-        ix = 0 if i < 3 else 1
-        iy = 0 if i % 3 == 0 else 1 if i % 3 == 1 else 2
+     # code for 2 re-wiring probabilities
+    # fig, axes = plt.subplots(1,2)
+    # for i, p in enumerate(list(results.keys())):
 
+    #     x = list(results[p].keys())
+    #     y = list(results[p].values())
+    #     axes[i].plot(x,y)
+    #     axes[i].set_title("Re-wiring probability p = " + str(p))
+    
+    # fig.tight_layout()
+    # fig.supxlabel('Size of Initial Active Set')
+    # fig.supylabel('Size of Resulting Active Set')
+
+    # code for 6 re-wiring probabilities
+    # fig, axes = plt.subplots(2,3)
+    # for i, p in enumerate(list(results.keys())):
+    #     ix = 0 if i < 3 else 1
+    #     iy = 0 if i % 3 == 0 else 1 if i % 3 == 1 else 2
+
+    #     x = list(results[p].keys())
+    #     y = list(results[p].values())
+    #     axes[ix,iy].plot(x,y)
+    #     axes[ix,iy].set_title("Re-wiring probability p = " + str(p))
+    
+    # fig.tight_layout()
+    # fig.supxlabel('Size of Initial Active Set')
+    # fig.supylabel('Size of Resulting Active Set')
+
+    # code to plot results in one graph
+    for p in results:
         x = list(results[p].keys())
         y = list(results[p].values())
-        axes[ix,iy].plot(x,y)
-        axes[ix,iy].set_title("Re-wiring probability p = " + str(p))
-    
-    fig.tight_layout()
-    fig.supxlabel('Size of Initial Active Set')
-    fig.supylabel('Size of Resulting Active Set')
+        labelValue = "p = " + str(p)
+        plt.plot(x,y, label=labelValue)
+
+    plt.legend(loc="upper left")
+    plt.xlabel("Size of Initial Active Set")
+    plt.ylabel("Size of Resulting Active Set")
+
 
     plt.show()
 
