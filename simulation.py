@@ -21,11 +21,14 @@ class HRCGraph:
         self.m = s * (s-1) * s * l
         self.vertices = [i for i in range(1, (l*s) + 1)]
         self.edges = dict()
+        self.in_degree = dict()
+        self.degree_heuristics = []
         self.thresholds = dict()
         self.initBeliefs = dict()
         self.convergentBeliefs = dict()
         self.split = False
         self.reShape = False
+        self.convergentT = None
         self.activations = 0
         self.mapSVtoVs = dict()
         self.mapSVtoSs = dict()
@@ -78,6 +81,13 @@ class HRCGraph:
                     else: self.edges[u][x] = self.edges[u][v]
 
                     del self.edges[u][v]
+        
+        # determine the in-degree of each node
+        for u in self.edges:
+            for v in self.edges[u]:
+                if v not in self.in_degree: self.in_degree[v] = 0
+                self.in_degree[v] += 1
+        self.degree_heuristics = sorted(self.in_degree.items(), key=lambda item: item[1], reverse=True)
 
 
     """ transpose - method to reverse the edges in the graph
@@ -272,6 +282,33 @@ class HRCGraph:
 
         self.reShape = True
 
+        # converge the interaction matrix
+        # define a matrix of co-efficients
+        A = []
+        for i in range(len(self.vertices)):
+            temp = [0] * len(self.vertices)
+            A.append(temp)
+        
+        for i, u in enumerate(self.vertices):
+            for j, v in enumerate(self.vertices):
+                if v in self.edges[u]: A[i][j] = self.edges[u][v]
+        A = np.array(A)
+
+        # converge A to some epsilon accuracy
+        # TODO: test the cimulation on some fixed num. of iterations for all instances of A
+        counter, epsilon = 0, 0.0001
+        prev = A
+        A = np.linalg.matrix_power(A, 2)
+        while (np.sum(np.abs(A - prev)) > epsilon):
+            if counter > 100: 
+                logging.warning("counter limit hit during computing convergence")
+                break
+            prev = A
+            A = np.linalg.matrix_power(A, 2)
+            counter += 1
+        
+        self.convergentT = A
+
 
     """ sigma - influence function
         :param A_0 - initial set of active nodes
@@ -303,30 +340,7 @@ class HRCGraph:
         output = self.activations
 
         # still need to calculate convergent belief of each non terminals
-        # define a matrix of co-efficients
-        A = []
-        for i in range(len(self.vertices)):
-            temp = [0] * len(self.vertices)
-            A.append(temp)
-        
-        for i, u in enumerate(self.vertices):
-            for j, v in enumerate(self.vertices):
-                if v in self.edges[u]: A[i][j] = self.edges[u][v]
-        A = np.array(A)
-
-        # converge A to some epsilon accuracy
-        # TODO: test the cimulation on some fixed num. of iterations for all instances of A
-        counter, epsilon = 0, 0.0001
-        prev = A
-        A = np.linalg.matrix_power(A, 2)
-        while (np.sum(np.abs(A - prev)) > epsilon):
-            if counter > 100: 
-                logging.warning("counter limit hit during computing convergence")
-                break
-            prev = A
-            A = np.linalg.matrix_power(A, 2)
-            counter += 1
-        
+        A = self.convergentT        
         b = np.array([self.initBeliefs[x] if x in self.initBeliefs else self.convergentBeliefs[x] for x in self.vertices])
         
         # calculate the vector of convergent beliefs in G'
@@ -363,8 +377,39 @@ class HRCGraph:
         return candidates
 
 
-    def getTerminatingGroups(self):
-        return self.terminating_groups
+    """ getTopDegreeHeuristic - get the top nodes with maximum degree
+        :param i - top i nodes
+    """
+    def getTopDegreeHeuristic(self, i):
+        arr = []
+        temp = []
+        counter = 0
+        prev = None
+        for item in self.degree_heuristics:
+            if counter == i: break
+
+            if prev is None: 
+                temp.append(item[0])
+            else:
+                if item[1] != prev:
+                    arr.append(temp)
+                    counter += 1
+                    temp = []
+                temp.append(item[0])
+
+            prev = item[1]
+        arr.append(temp)
+        if arr == []: return []
+
+        for a in arr:
+            random.shuffle(a)
+
+        output = []
+        while len(output) < i:
+            if arr[0] == []: arr.pop(0)
+            else: output.append(arr[0].pop(0))
+
+        return output
 
     def __str__(self):
         return "Vertices: " + str(self.vertices) + "\nEdges: " + str(self.edges)
@@ -374,108 +419,86 @@ def main():
     sys.setrecursionlimit(5000)
     logging.basicConfig(level=logging.INFO)
 
-    results = dict()
+    # NOTE: set re-wiring probability
+    p = 0.25
+    G = HRCGraph(20, 5, p)
+    G.reShapeGraph()
+    candidates = G.getCandidates()
 
-    # iterate through different re-wiring probability 
-    p = 0
-    # ps = [0.05, 0.15]
-    # for p in ps:
-    while p <= 1:
-        p = round(p, 2)
+    resultsG = dict()
+    resultsR = dict()
+    resultsD = dict()
 
-        G = HRCGraph(20, 5, p)
-        G.reShapeGraph()
-        candidates = G.getCandidates()
+    # NOTE: can increase the n value for better prediction. Results were simulated on n = 1000
+    n = 1000
+    targetSize = 5
 
-        pResults = dict()
-        # NOTE: can increase the n value for better prediction. Results were simulated on n = 1000
-        n = 1
-        targetSize = 5
+    # sizes of initial active sets to go through
+    for k in range(0, targetSize+1, 1):  
+        greedy = 0
+        rand = 0
+        degree = 0
+        # iterate n times to calculate average
+        for i in range(n):
+            # build initial active set of size of k, Have to recreate the initial active set as thresholds get updated and the previously selected nodes may not be the most influential after threshold values are randomised
+            A_0 = []
+            tempCandidates = copy.deepcopy(candidates)
+            for j in range(k):
 
-        # sizes of initial active sets to go through
-        for k in range(0, targetSize+1, 1):  
-            total = 0
-            # iterate n times to calculate average
-            for i in range(n):
+                # determine the best candidate to select
+                bestCandidate = None
+                for c in tempCandidates:
+                    temp = A_0 + [c]
+                    activations = G.sigma(temp)
+                    if bestCandidate is None: bestCandidate = (c, activations)
+                    else: bestCandidate = bestCandidate if bestCandidate[1] >= activations else (c, activations)
+                if bestCandidate is not None: 
+                    tempCandidates.remove(bestCandidate[0])
+                    A_0.append(bestCandidate[0])
+            greedy += G.sigma(A_0)
 
-                # build initial active set of size of k, Have to recreate the initial active set as thresholds get updated and the previously selected nodes may not be the most influential after threshold values are randomised
-                A_0 = []
-                tempCandidates = copy.deepcopy(candidates)
-                for j in range(k):
+            # simulate on random selection of initial active set
+            RA_0 = set()
+            while len(RA_0) < k:
+                RA_0.add(random.choice(candidates))
+            rand += G.sigma(RA_0)
 
-                    # determine the best candidate to select
-                    bestCandidate = None
-                    for c in tempCandidates:
-                        temp = A_0 + [c]
-                        activations = G.sigma(temp)
-                        if bestCandidate is None: bestCandidate = (c, activations)
-                        else: bestCandidate = bestCandidate if bestCandidate[1] >= activations else (c, activations)
-                    if bestCandidate is not None: 
-                        tempCandidates.remove(bestCandidate[0])
-                        A_0.append(bestCandidate[0])
-                
-                total += G.sigma(A_0)
+            # simulate on degree heuristic
+            DA_0 = G.getTopDegreeHeuristic(k)
+            degree += G.sigma(DA_0)
 
-                # randomise the thresholds
-                G.updateThresholds()
-            
-            pResults[k] = total // n
-            
-        results[p] = pResults
-        p += 0.2
+            # randomise the thresholds
+            G.updateThresholds()
+        
+        resultsG[k] = greedy // n
+        resultsR[k] = rand // n
+        resultsD[k] = degree // n
+        
 
     # plot the results
 
-    # code for one fixed re-wiring probability
-    # x = list(results[p].keys())
-    # y = list(results[p].values())
-    # plt.plot(x,y)
-    # plt.xlabel("Size of Initial Active Set")
-    # plt.ylabel("Size of Resulting Active Set")
-    # plt.title("Re-wiring probability p = " + str(p))
-
-     # code for 2 re-wiring probabilities
-    # fig, axes = plt.subplots(1,2)
-    # for i, p in enumerate(list(results.keys())):
-
-    #     x = list(results[p].keys())
-    #     y = list(results[p].values())
-    #     axes[i].plot(x,y)
-    #     axes[i].set_title("Re-wiring probability p = " + str(p))
-    
-    # fig.tight_layout()
-    # fig.supxlabel('Size of Initial Active Set')
-    # fig.supylabel('Size of Resulting Active Set')
-
-    # code for 6 re-wiring probabilities
-    # fig, axes = plt.subplots(2,3)
-    # for i, p in enumerate(list(results.keys())):
-    #     ix = 0 if i < 3 else 1
-    #     iy = 0 if i % 3 == 0 else 1 if i % 3 == 1 else 2
-
-    #     x = list(results[p].keys())
-    #     y = list(results[p].values())
-    #     axes[ix,iy].plot(x,y)
-    #     axes[ix,iy].set_title("Re-wiring probability p = " + str(p))
-    
-    # fig.tight_layout()
-    # fig.supxlabel('Size of Initial Active Set')
-    # fig.supylabel('Size of Resulting Active Set')
-
     # code to plot results in one graph
-    for p in results:
-        x = list(results[p].keys())
-        y = list(results[p].values())
-        labelValue = "p = " + str(p)
-        plt.plot(x,y, label=labelValue)
+    x = list(resultsG.keys())
+    y = list(resultsG.values())
+    labelValue = "Greedy"
+    plt.plot(x,y, label=labelValue)
+    
+    x = list(resultsR.keys())
+    y = list(resultsR.values())
+    labelValue = "Random"
+    plt.plot(x,y,label=labelValue)
 
+    x = list(resultsD.keys())
+    y = list(resultsD.values())
+    labelValue = "Degree"
+    plt.plot(x,y,label=labelValue)
+
+    plt.title("Re-wiring probability p = "+str(p))
     plt.legend(loc="upper left")
     plt.xlabel("Size of Initial Active Set")
     plt.ylabel("Size of Resulting Active Set")
 
-
     plt.show()
-
 
 if __name__ == '__main__':
     main() 
