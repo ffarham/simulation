@@ -2,8 +2,8 @@ import random
 import numpy as np
 import logging
 import sys
-import copy
-import matplotlib.pyplot as plt
+import time
+import json
 
 """
     HRCGraph - class for Homophilic Relaxed Caveman Graph
@@ -19,6 +19,7 @@ class HRCGraph:
 
         self.n = l * s
         self.m = s * (s-1) * s * l
+        self.initial_vertices = [i for i in range(1, (l*s) + 1)]
         self.vertices = [i for i in range(1, (l*s) + 1)]
         self.edges = dict()
         self.in_degree = dict()
@@ -29,7 +30,6 @@ class HRCGraph:
         self.split = False
         self.reShape = False
         self.convergentT = None
-        self.activations = 0
         self.mapSVtoVs = dict()
         self.mapSVtoSs = dict()
         self.terminating_groups = []
@@ -87,7 +87,18 @@ class HRCGraph:
             for v in self.edges[u]:
                 if v not in self.in_degree: self.in_degree[v] = 0
                 self.in_degree[v] += 1
-        self.degree_heuristics = sorted(self.in_degree.items(), key=lambda item: item[1], reverse=True)
+        sorted_degrees = sorted(self.in_degree.items(), key=lambda item: item[1], reverse=True)
+        temp = []
+        prev = None
+        for item in sorted_degrees:
+            if prev is None: temp.append(item[0])
+            else:
+                if item[1] != prev: 
+                    self.degree_heuristics.append(temp)
+                    temp = []
+                temp.append(item[0])
+            prev = item[1]
+        self.degree_heuristics.append(temp)
 
 
     """ transpose - method to reverse the edges in the graph
@@ -309,6 +320,64 @@ class HRCGraph:
         
         self.convergentT = A
 
+    """ hill_climbing - determine node that increases the convergent belief the most for each node in the network
+        TODO: pick highest convergnce after highest activation
+    """
+    def hill_climbing(self, A_0, candidates):
+        if not self.reShape: self.reShapeGraph()
+
+        # TODO: randomise of convergent belief is also the same
+        bestCandidate = None
+        for c in candidates:
+            total_activations = 0
+            temp_activation = A_0 + [c]
+
+            # determine convergent belief of all supervertices
+            for sv in self.terminals:
+                s = self.mapSVtoSs[sv]
+                nodes = self.mapSVtoVs[sv]
+                # create belief vector of desired nodes + any activations
+                p = [self.initBeliefs[x] if x not in temp_activation else 1 for x in nodes]
+
+                consensus = np.dot(s, p)
+                self.convergentBeliefs[sv] = consensus
+                # determine the nodes activated in the respective terminating group
+                for node in nodes:
+                    if consensus >= self.thresholds[node]: total_activations += 1
+            
+            # if all nodes belong to some minimal closed group
+            if len(self.non_terminals) == 0: 
+                value = sum(list(self.convergentBeliefs.values()))
+                if bestCandidate is None:
+                    bestCandidate = (c, value, total_activations)
+                else:
+                    if total_activations > bestCandidate[2]:
+                        bestCandidate = (c, value, total_activations)
+                    elif total_activations == bestCandidate[2]:
+                        bestCandidate = bestCandidate if bestCandidate[1] > value else (c, value, total_activations)
+
+            else:
+                # still need to calculate convergent belief of each non terminals
+                A = self.convergentT        
+                b = np.array([self.initBeliefs[x] if x in self.initBeliefs else self.convergentBeliefs[x] for x in self.vertices])
+                
+                # calculate the vector of convergent beliefs in G'
+                res = A.dot(b.T)
+                value = sum(res)
+
+                 # count the number of vertices in R that get activated
+                for i, r in enumerate(self.non_terminals):
+                    if res[i] >= self.thresholds[r]: total_activations += 1
+
+                if bestCandidate is None:
+                    bestCandidate = (c, value, total_activations)
+                else:
+                    if total_activations > bestCandidate[2]:
+                        bestCandidate = (c, value, total_activations)
+                    elif total_activations == bestCandidate[2]:
+                        bestCandidate = bestCandidate if bestCandidate[1] > value else (c, value, total_activations)
+        
+        return bestCandidate
 
     """ sigma - influence function
         :param A_0 - initial set of active nodes
@@ -318,7 +387,7 @@ class HRCGraph:
         
         if not self.reShape: self.reShapeGraph()
 
-        self.activations = 0
+        total_activations = 0
 
         # determine convergent belief of all supervertices
         for sv in self.terminals:
@@ -331,13 +400,10 @@ class HRCGraph:
             self.convergentBeliefs[sv] = consensus
             # determine the nodes activated in the respective terminating group
             for node in nodes:
-                if consensus >= self.thresholds[node]: self.activations += 1
+                if consensus >= self.thresholds[node]: total_activations += 1
         
         # if all nodes belong to some minimal closed group
-        if len(self.non_terminals) == 0: return self.activations
-
-
-        output = self.activations
+        if len(self.non_terminals) == 0: return total_activations
 
         # still need to calculate convergent belief of each non terminals
         A = self.convergentT        
@@ -348,10 +414,9 @@ class HRCGraph:
 
         # count the number of vertices in R that get activated
         for i, r in enumerate(self.non_terminals):
-            if c[i] >= self.thresholds[r]: output += 1
+            if c[i] >= self.thresholds[r]: total_activations += 1
         
-        return output
-
+        return total_activations
     
     """ updateThresholds - method to handle threhold randomisation 
         - also calculates the new subset of nodes that get activated with new threshold values
@@ -380,36 +445,21 @@ class HRCGraph:
     """ getTopDegreeHeuristic - get the top nodes with maximum degree
         :param i - top i nodes
     """
-    def getTopDegreeHeuristic(self, i):
-        arr = []
-        temp = []
-        counter = 0
-        prev = None
-        for item in self.degree_heuristics:
-            if counter == i: break
+    def getTopDegreeHeuristic(self):
+        
+        if self.degree_heuristics == []: return []
 
-            if prev is None: 
-                temp.append(item[0])
-            else:
-                if item[1] != prev:
-                    arr.append(temp)
-                    counter += 1
-                    temp = []
-                temp.append(item[0])
+        random.shuffle(self.degree_heuristics[0])
 
-            prev = item[1]
-        arr.append(temp)
-        if arr == []: return []
-
-        for a in arr:
-            random.shuffle(a)
-
-        output = []
-        while len(output) < i:
-            if arr[0] == []: arr.pop(0)
-            else: output.append(arr[0].pop(0))
+        output = self.degree_heuristics[0].pop(0)
+        if self.degree_heuristics[0] == []: self.degree_heuristics.pop(0)
 
         return output
+
+    """ getVertices - return all vertices in the initial network
+    """
+    def getVertices(self):
+        return self.initial_vertices
 
     def __str__(self):
         return "Vertices: " + str(self.vertices) + "\nEdges: " + str(self.edges)
@@ -419,86 +469,72 @@ def main():
     sys.setrecursionlimit(5000)
     logging.basicConfig(level=logging.INFO)
 
-    # NOTE: set re-wiring probability
-    p = 0.25
-    G = HRCGraph(20, 5, p)
-    G.reShapeGraph()
-    candidates = G.getCandidates()
-
-    resultsG = dict()
-    resultsR = dict()
-    resultsD = dict()
-
-    # NOTE: can increase the n value for better prediction. Results were simulated on n = 1000
-    n = 1000
-    targetSize = 5
-
-    # sizes of initial active sets to go through
-    for k in range(0, targetSize+1, 1):  
-        greedy = 0
-        rand = 0
-        degree = 0
-        # iterate n times to calculate average
-        for i in range(n):
-            # build initial active set of size of k, Have to recreate the initial active set as thresholds get updated and the previously selected nodes may not be the most influential after threshold values are randomised
-            A_0 = []
-            tempCandidates = copy.deepcopy(candidates)
-            for j in range(k):
-
-                # determine the best candidate to select
-                bestCandidate = None
-                for c in tempCandidates:
-                    temp = A_0 + [c]
-                    activations = G.sigma(temp)
-                    if bestCandidate is None: bestCandidate = (c, activations)
-                    else: bestCandidate = bestCandidate if bestCandidate[1] >= activations else (c, activations)
-                if bestCandidate is not None: 
-                    tempCandidates.remove(bestCandidate[0])
-                    A_0.append(bestCandidate[0])
-            greedy += G.sigma(A_0)
-
-            # simulate on random selection of initial active set
-            RA_0 = set()
-            while len(RA_0) < k:
-                RA_0.add(random.choice(candidates))
-            rand += G.sigma(RA_0)
-
-            # simulate on degree heuristic
-            DA_0 = G.getTopDegreeHeuristic(k)
-            degree += G.sigma(DA_0)
-
-            # randomise the thresholds
-            G.updateThresholds()
-        
-        resultsG[k] = greedy // n
-        resultsR[k] = rand // n
-        resultsD[k] = degree // n
-        
-
-    # plot the results
-
-    # code to plot results in one graph
-    x = list(resultsG.keys())
-    y = list(resultsG.values())
-    labelValue = "Greedy"
-    plt.plot(x,y, label=labelValue)
+    ps = [0, 0.2, 0.4, 0.6, 0.8, 1]
+    clique_size = 5
+    num_of_cliques = 20
+    targetSize = 30
+    iterations = 10
     
-    x = list(resultsR.keys())
-    y = list(resultsR.values())
-    labelValue = "Random"
-    plt.plot(x,y,label=labelValue)
+    for p in ps:
+        # store results of greedy, degree and random selections
+        resultsG = dict()
+        resultsD = dict()
+        resultsR = dict()
+        # NOTE: this is assuming the initial belief vector is a zero vector
+        resultsG[0] , resultsD[0] , resultsR[0] = 0, 0, 0
 
-    x = list(resultsD.keys())
-    y = list(resultsD.values())
-    labelValue = "Degree"
-    plt.plot(x,y,label=labelValue)
+        # sizes of initial active sets to go through
+        for _ in range(iterations):
+            G = HRCGraph(num_of_cliques, clique_size, p)
+            G.reShapeGraph()
+            candidates = G.getCandidates()
+            vertices = G.getVertices()
 
-    plt.title("Re-wiring probability p = "+str(p))
-    plt.legend(loc="upper left")
-    plt.xlabel("Size of Initial Active Set")
-    plt.ylabel("Size of Resulting Active Set")
+            GA_0, DA_0, RA_0 = [], [], []
+            prev_activations_greedy = None
+            for k in range(1, targetSize+1):  
 
-    plt.show()
+                # hill climbing to determine next best node 
+                if len(candidates) > 0:
+                    best_candidateG, _, total_activations = G.hill_climbing(GA_0, candidates)
+                    candidates.remove(best_candidateG)
+                    GA_0.append(best_candidateG)
+                    if k not in resultsG: resultsG[k] = 0
+                    resultsG[k] += total_activations
+                    prev_activations_greedy = total_activations
+                else:
+                    resultsG[k] += prev_activations_greedy                    
+
+                # degree heuristic to determine next best node
+                best_candidateD = G.getTopDegreeHeuristic()
+                DA_0.append(best_candidateD)
+                if k not in resultsD: resultsD[k] = 0
+                resultsD[k] += G.sigma(DA_0)
+
+                # random selection of initial active set
+                randNode = random.choice(vertices)
+                vertices.remove(randNode)
+                RA_0.append(randNode)
+                if k not in resultsR: resultsR[k] = 0
+                resultsR[k] += G.sigma(list(RA_0))
+
+
+        # average the results
+        for k in resultsD: 
+            resultsD[k] = resultsD[k] // iterations
+            resultsG[k] = resultsG[k] // iterations
+            resultsR[k] = resultsR[k] // iterations
+
+        # save results to file
+        with open("./results2/" + str(p) + ".txt", 'w') as f:
+            f.write(json.dumps(resultsG))
+            f.write('\n')
+            f.write(json.dumps(resultsD))
+            f.write('\n')
+            f.write(json.dumps(resultsR))
+            f.write('\n')
+
 
 if __name__ == '__main__':
     main() 
+    
