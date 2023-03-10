@@ -4,6 +4,7 @@ import logging
 import sys
 import time
 import json
+import copy
 
 """
     HRCGraph - class for Homophilic Relaxed Caveman Graph
@@ -423,7 +424,6 @@ class HRCGraph:
         :param A_0 - the new initial active set of nodes
     """
     def updateThresholds(self):
-        
         for node in self.thresholds:
             self.thresholds[node] = random.uniform(0,1)
 
@@ -442,19 +442,11 @@ class HRCGraph:
         return candidates
 
 
-    """ getTopDegreeHeuristic - get the top nodes with maximum degree
-        :param i - top i nodes
+    """ get_degree_ordered_nodes - return the nodes ordered in largest incoming degree
     """
-    def getTopDegreeHeuristic(self):
-        
-        if self.degree_heuristics == []: return []
+    def get_degree_ordered_nodes(self):
+        return self.degree_heuristics
 
-        random.shuffle(self.degree_heuristics[0])
-
-        output = self.degree_heuristics[0].pop(0)
-        if self.degree_heuristics[0] == []: self.degree_heuristics.pop(0)
-
-        return output
 
     """ getVertices - return all vertices in the initial network
     """
@@ -469,70 +461,113 @@ def main():
     sys.setrecursionlimit(5000)
     logging.basicConfig(level=logging.INFO)
 
+    # initialise variables
     ps = [0, 0.2, 0.4, 0.6, 0.8, 1]
-    clique_size = 5
-    num_of_cliques = 20
+    clique_size = 10
+    num_of_cliques = 100
     targetSize = 30
-    iterations = 10
+    p_iterations = 10
+    k_iterations = 10
     
+    # timing purposes
+    s = time.time()
+    total_init_time = 0
+    total_kTime = 0
+
     for p in ps:
-        # store results of greedy, degree and random selections
-        resultsG = dict()
-        resultsD = dict()
-        resultsR = dict()
+        print("p: ", p)
+        # store sum of results for greedy, degree and random selections for p iterations
+        p_results_greedy, p_results_degree, p_results_random = dict(), dict(), dict()
+
         # NOTE: this is assuming the initial belief vector is a zero vector
-        resultsG[0] , resultsD[0] , resultsR[0] = 0, 0, 0
+        p_results_greedy[0] , p_results_degree[0] , p_results_random[0] = 0, 0, 0
 
         # sizes of initial active sets to go through
-        for _ in range(iterations):
+        for _ in range(p_iterations):
+            ss = time.time()
             G = HRCGraph(num_of_cliques, clique_size, p)
             G.reShapeGraph()
-            candidates = G.getCandidates()
-            vertices = G.getVertices()
 
-            GA_0, DA_0, RA_0 = [], [], []
-            prev_activations_greedy = None
-            for k in range(1, targetSize+1):  
+            ff = time.time()
+            total_init_time += ff-ss
 
-                # hill climbing to determine next best node 
-                if len(candidates) > 0:
-                    best_candidateG, _, total_activations = G.hill_climbing(GA_0, candidates)
-                    candidates.remove(best_candidateG)
-                    GA_0.append(best_candidateG)
-                    if k not in resultsG: resultsG[k] = 0
-                    resultsG[k] += total_activations
-                    prev_activations_greedy = total_activations
-                else:
-                    resultsG[k] += prev_activations_greedy                    
+            # store sum of results for greedy, degree and random selections for k iterations
+            k_results_greedy, k_results_degree, k_results_random = dict(), dict(), dict()
+            
+            ss = time.time()
+            for _ in range(k_iterations):
+                # reset candidates and vertices at the start of each k iteration as the values get poped
+                candidates = copy.deepcopy(G.getCandidates())
+                vertices = copy.deepcopy(G.getVertices())
+                degree_ordered_nodes = copy.deepcopy(G.get_degree_ordered_nodes())
 
-                # degree heuristic to determine next best node
-                best_candidateD = G.getTopDegreeHeuristic()
-                DA_0.append(best_candidateD)
-                if k not in resultsD: resultsD[k] = 0
-                resultsD[k] += G.sigma(DA_0)
+                GA_0, DA_0, RA_0 = [], [], []
+                prev_activations_greedy = None
+                for k in range(1, targetSize+1):  
+                    # hill climbing to determine next best node 
+                    if len(candidates) > 0:
+                        best_candidateG, _, total_activations = G.hill_climbing(GA_0, candidates)
+                        candidates.remove(best_candidateG)
+                        GA_0.append(best_candidateG)
+                        if k not in k_results_greedy: k_results_greedy[k] = 0
+                        k_results_greedy[k] += total_activations
+                        prev_activations_greedy = total_activations
+                    else:
+                        if k not in k_results_greedy: k_results_greedy[k] = 0
+                        k_results_greedy[k] += prev_activations_greedy                    
 
-                # random selection of initial active set
-                randNode = random.choice(vertices)
-                vertices.remove(randNode)
-                RA_0.append(randNode)
-                if k not in resultsR: resultsR[k] = 0
-                resultsR[k] += G.sigma(list(RA_0))
+                    # degree heuristic to determine next best node
+                    if len(degree_ordered_nodes) > 0:
+                        # NOTE: adds randomness to selection
+                        random.shuffle(degree_ordered_nodes[0])
+                        degree_candidate = degree_ordered_nodes[0].pop(0)
+                        if degree_ordered_nodes[0] == []: degree_ordered_nodes.pop(0)
+                        DA_0.append(degree_candidate)      
+                    if k not in k_results_degree: k_results_degree[k] = 0
+                    k_results_degree[k] += G.sigma(DA_0)
 
+                    # random selection of initial active set
+                    randNode = random.choice(vertices)
+                    vertices.remove(randNode)
+                    RA_0.append(randNode)
+                    if k not in k_results_random: k_results_random[k] = 0
+                    k_results_random[k] += G.sigma(list(RA_0))
+                
+                # randomise the thresholds
+                G.updateThresholds()
 
-        # average the results
-        for k in resultsD: 
-            resultsD[k] = resultsD[k] // iterations
-            resultsG[k] = resultsG[k] // iterations
-            resultsR[k] = resultsR[k] // iterations
+            # average the results over k iterations
+            for k in k_results_greedy: 
+                if k not in p_results_greedy: p_results_greedy[k] = 0
+                p_results_greedy[k] += k_results_greedy[k] // k_iterations
+                if k not in p_results_degree: p_results_degree[k] = 0
+                p_results_degree[k] += k_results_degree[k] // k_iterations
+                if k not in p_results_random: p_results_random[k] = 0
+                p_results_random[k] += k_results_random[k] // k_iterations
+
+            ff = time.time()
+            total_kTime += ff - ss
+
+        # average the results over p iterations
+        for k in k_results_greedy: 
+            p_results_greedy[k] = p_results_greedy[k] // p_iterations
+            p_results_degree[k] = p_results_degree[k] // p_iterations
+            p_results_random[k] = p_results_random[k] // p_iterations
 
         # save results to file
         with open("./results2/" + str(p) + ".txt", 'w') as f:
-            f.write(json.dumps(resultsG))
+            f.write(json.dumps(p_results_greedy))
             f.write('\n')
-            f.write(json.dumps(resultsD))
+            f.write(json.dumps(p_results_degree))
             f.write('\n')
-            f.write(json.dumps(resultsR))
+            f.write(json.dumps(p_results_random))
             f.write('\n')
+    
+    f = time.time()
+    total = f - s
+    print("Total time: ", round(total, 2))
+    print("Total init time: ", round(total_init_time / total, 2))
+    print("k percentage: " + str(round(total_kTime / total, 2)))
 
 
 if __name__ == '__main__':
