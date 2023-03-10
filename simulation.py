@@ -458,24 +458,20 @@ class HRCGraph:
 
 
 def main():
-    sys.setrecursionlimit(5000)
+    # NOTE: increase the limit to allow the DFS to run on large networks
+    sys.setrecursionlimit(1000)
     logging.basicConfig(level=logging.INFO)
 
-    # initialise variables
+    # NOTE: initialise settings
     ps = [0, 0.2, 0.4, 0.6, 0.8, 1]
     clique_size = 10
-    num_of_cliques = 100
-    targetSize = 30
+    num_of_cliques = 10
+    targetSize = 15
     p_iterations = 10
-    k_iterations = 10
+    k_iterations = 100
     
-    # timing purposes
-    s = time.time()
-    total_init_time = 0
-    total_kTime = 0
-
     for p in ps:
-        print("p: ", p)
+        logging.info("p: " + str(p))
         # store sum of results for greedy, degree and random selections for p iterations
         p_results_greedy, p_results_degree, p_results_random = dict(), dict(), dict()
 
@@ -484,17 +480,13 @@ def main():
 
         # sizes of initial active sets to go through
         for _ in range(p_iterations):
-            ss = time.time()
             G = HRCGraph(num_of_cliques, clique_size, p)
             G.reShapeGraph()
 
-            ff = time.time()
-            total_init_time += ff-ss
 
             # store sum of results for greedy, degree and random selections for k iterations
             k_results_greedy, k_results_degree, k_results_random = dict(), dict(), dict()
             
-            ss = time.time()
             for _ in range(k_iterations):
                 # reset candidates and vertices at the start of each k iteration as the values get poped
                 candidates = copy.deepcopy(G.getCandidates())
@@ -545,9 +537,6 @@ def main():
                 if k not in p_results_random: p_results_random[k] = 0
                 p_results_random[k] += k_results_random[k] // k_iterations
 
-            ff = time.time()
-            total_kTime += ff - ss
-
         # average the results over p iterations
         for k in k_results_greedy: 
             p_results_greedy[k] = p_results_greedy[k] // p_iterations
@@ -563,12 +552,6 @@ def main():
             f.write(json.dumps(p_results_random))
             f.write('\n')
     
-    f = time.time()
-    total = f - s
-    print("Total time: ", round(total, 2))
-    print("Total init time: ", round(total_init_time / total, 2))
-    print("k percentage: " + str(round(total_kTime / total, 2)))
-
 
 if __name__ == '__main__':
     main() 
