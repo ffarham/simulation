@@ -1,16 +1,23 @@
 import os
 import json
 import matplotlib.pyplot as plt
+import logging
 
 def main():
-    # set the re-wiring probabilities used
+    logging.basicConfig(level=logging.INFO)
+
+    # NOTE: set the re-wiring probabilities to load
     ps = [0, 0.2, 0.4, 0.6, 0.8, 1]
 
     for p in ps:
-        file_path = "./results2/" + str(p)+".txt"
+        # NOTE: define directory to load results from
+        dir_path = "./results2/"
+        assert os.path.exists(dir_path), "Directory to load results from is not defined"
+
+        file_path = dir_path + str(p)+".txt"
         if os.path.exists(file_path):
             # fetch simulated data from the file
-            with open("results2/" + str(p)+".txt", 'r') as f:
+            with open(file_path, 'r') as f:
 
                 # plot the results
                 data = json.loads(f.readline()) 
@@ -37,6 +44,8 @@ def main():
                 plt.ylabel("Size of Resulting Active Set")
 
                 plt.show() 
+        else:
+            logging.info("file " + file_path + " not found")
 
 if __name__ == "__main__":
     main()

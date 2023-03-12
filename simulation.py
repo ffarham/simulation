@@ -5,6 +5,7 @@ import sys
 import time
 import json
 import copy
+import os
 
 """
     HRCGraph - class for Homophilic Relaxed Caveman Graph
@@ -467,16 +468,20 @@ def main():
     sys.setrecursionlimit(1000)
     logging.basicConfig(level=logging.INFO)
 
-    # initialise settings
+    # NOTE: initialise directory path to store results in
+    dir_path = "./results2d/"
+    assert os.path.exists(dir_path), "Directory to store results in is not defined"
+
+    # NOTE: initialise settings
     ps = [0, 0.2, 0.4, 0.6, 0.8, 1]
     clique_size = 5
     num_of_cliques = 10
     targetSize = 15
-    p_iterations = 1        # redo the wiring process by re-initialising the graph
+    p_iterations = 1        # average over different re-wiring instances by re-initialising the graph
     k_iterations = 1000     # average over thresholds instance in one particular re-wiring process
     
     # ensure size of initial active set is feasible
-    assert targetSize <= clique_size * num_of_cliques
+    assert targetSize <= clique_size * num_of_cliques, "Size of initial set of active nodes exceed the total number of nodes in the network"
 
     for p in ps:
         logging.info("p: " + str(p))
@@ -553,7 +558,7 @@ def main():
             p_results_random[k] = p_results_random[k] // p_iterations
 
         # save results to file
-        with open("./results2/" + str(p) + ".txt", 'w') as f:
+        with open(dir_path + str(p) + ".txt", 'w') as f:
             f.write(json.dumps(p_results_greedy))
             f.write('\n')
             f.write(json.dumps(p_results_degree))
