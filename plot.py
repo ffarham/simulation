@@ -3,10 +3,13 @@ import json
 import matplotlib.pyplot as plt
 
 def main():
+    # set the re-wiring probabilities used
     ps = [0, 0.2, 0.4, 0.6, 0.8, 1]
+
     for p in ps:
         file_path = "./results2/" + str(p)+".txt"
         if os.path.exists(file_path):
+            # fetch simulated data from the file
             with open("results2/" + str(p)+".txt", 'r') as f:
 
                 # plot the results

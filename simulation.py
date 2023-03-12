@@ -60,7 +60,8 @@ class HRCGraph:
 
         for node in self.vertices:
             self.thresholds[node] = random.uniform(0,1)
-            self.initBeliefs[node] = 0 # random.uniform(0,1)
+            # NOTE: initialising the initial vector of beliefs to be a zero vector
+            self.initBeliefs[node] = 0 
         
         # rewire the edges
         for u in self.edges:
@@ -83,7 +84,7 @@ class HRCGraph:
 
                     del self.edges[u][v]
         
-        # determine the in-degree of each node
+        # determine the in-degree of each node -> used for degree heuristic selection
         for u in self.edges:
             for v in self.edges[u]:
                 if v not in self.in_degree: self.in_degree[v] = 0
@@ -321,13 +322,14 @@ class HRCGraph:
         
         self.convergentT = A
 
+
     """ hill_climbing - determine node that increases the convergent belief the most for each node in the network
-        TODO: pick highest convergnce after highest activation
     """
     def hill_climbing(self, A_0, candidates):
+        # re-format the graph if necessary
         if not self.reShape: self.reShapeGraph()
 
-        # TODO: randomise of convergent belief is also the same
+        # iterate through all candidates to determine the best one
         bestCandidate = None
         for c in candidates:
             total_activations = 0
@@ -346,6 +348,7 @@ class HRCGraph:
                 for node in nodes:
                     if consensus >= self.thresholds[node]: total_activations += 1
             
+            # NOTE: uses the greatest increase in convergent belief as tie-breaker between nodes that increase the resulting set of active nodes by the same amount
             # if all nodes belong to some minimal closed group
             if len(self.non_terminals) == 0: 
                 value = sum(list(self.convergentBeliefs.values()))
@@ -379,6 +382,7 @@ class HRCGraph:
                         bestCandidate = bestCandidate if bestCandidate[1] > value else (c, value, total_activations)
         
         return bestCandidate
+
 
     """ sigma - influence function
         :param A_0 - initial set of active nodes
@@ -418,6 +422,7 @@ class HRCGraph:
             if c[i] >= self.thresholds[r]: total_activations += 1
         
         return total_activations
+        
     
     """ updateThresholds - method to handle threhold randomisation 
         - also calculates the new subset of nodes that get activated with new threshold values
@@ -432,8 +437,7 @@ class HRCGraph:
         :return the nodes in the terminating groups
     """
     def getCandidates(self):
-        if not self.split:
-            self.splitGraph()
+        if not self.split: self.splitGraph()
         
         candidates = []
         for group in self.terminating_groups:
@@ -453,6 +457,7 @@ class HRCGraph:
     def getVertices(self):
         return self.initial_vertices
 
+
     def __str__(self):
         return "Vertices: " + str(self.vertices) + "\nEdges: " + str(self.edges)
 
@@ -462,14 +467,17 @@ def main():
     sys.setrecursionlimit(1000)
     logging.basicConfig(level=logging.INFO)
 
-    # NOTE: initialise settings
+    # initialise settings
     ps = [0, 0.2, 0.4, 0.6, 0.8, 1]
-    clique_size = 10
+    clique_size = 5
     num_of_cliques = 10
     targetSize = 15
-    p_iterations = 10
-    k_iterations = 100
+    p_iterations = 1        # redo the wiring process by re-initialising the graph
+    k_iterations = 1000     # average over thresholds instance in one particular re-wiring process
     
+    # ensure size of initial active set is feasible
+    assert targetSize <= clique_size * num_of_cliques
+
     for p in ps:
         logging.info("p: " + str(p))
         # store sum of results for greedy, degree and random selections for p iterations
@@ -482,7 +490,6 @@ def main():
         for _ in range(p_iterations):
             G = HRCGraph(num_of_cliques, clique_size, p)
             G.reShapeGraph()
-
 
             # store sum of results for greedy, degree and random selections for k iterations
             k_results_greedy, k_results_degree, k_results_random = dict(), dict(), dict()
@@ -504,6 +511,8 @@ def main():
                         if k not in k_results_greedy: k_results_greedy[k] = 0
                         k_results_greedy[k] += total_activations
                         prev_activations_greedy = total_activations
+
+                    # use the previous initial active set if there are no more candidates to select from
                     else:
                         if k not in k_results_greedy: k_results_greedy[k] = 0
                         k_results_greedy[k] += prev_activations_greedy                    
