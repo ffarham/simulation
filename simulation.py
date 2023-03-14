@@ -330,8 +330,63 @@ class HRCGraph:
         # re-format the graph if necessary
         if not self.reShape: self.reShapeGraph()
 
+        # keep track of best candidates that purely increase the resulting size of active set the most
+        best_candidates = []
+        best_value = -1
+
         # iterate through all candidates to determine the best one
-        bestCandidate = None
+        for c in candidates:
+            total_activations = 0
+            temp_activation = A_0 + [c]
+
+            # determine convergent belief of all supervertices
+            for sv in self.terminals:
+                s = self.mapSVtoSs[sv]
+                nodes = self.mapSVtoVs[sv]
+                # create belief vector of desired nodes + any activations
+                p = [self.initBeliefs[x] if x not in temp_activation else 1 for x in nodes]
+
+                consensus = np.dot(s, p)
+                self.convergentBeliefs[sv] = consensus
+                # determine the nodes activated in the respective terminating group
+                for node in nodes:
+                    if consensus >= self.thresholds[node]: total_activations += 1
+
+            # if all nodes belong to some minimal closed group
+            if len(self.non_terminals) > 0: 
+                # still need to calculate convergent belief of each non terminals
+                A = self.convergentT        
+                b = np.array([self.initBeliefs[x] if x in self.initBeliefs else self.convergentBeliefs[x] for x in self.vertices])
+                
+                # calculate the vector of convergent beliefs in G'
+                c_arr = A.dot(b.T)
+
+                # count the number of vertices in R that get activated
+                for i, r in enumerate(self.non_terminals):
+                    if c_arr[i] >= self.thresholds[r]: total_activations += 1
+            
+            # updates best candidates
+            if total_activations > best_value: 
+                best_candidates, best_value = [], total_activations
+                best_candidates.append((c, total_activations))
+
+            elif total_activations == best_value:
+                best_candidates.append((c, total_activations))
+
+        return random.choice(best_candidates)
+
+
+
+    def hill_climbing_augmented(self, A_0, candidates):
+        # re-format the graph if necessary
+        if not self.reShape: self.reShapeGraph()
+
+        # keep track of best candidates that increase the resulting size of active set and also increase the total belief in the network the most
+        best_candidates = []
+        best_value = -1
+        best_convergent_belief_value = -1
+
+        # iterate through all candidates to determine the best one
         for c in candidates:
             total_activations = 0
             temp_activation = A_0 + [c]
@@ -349,40 +404,26 @@ class HRCGraph:
                 for node in nodes:
                     if consensus >= self.thresholds[node]: total_activations += 1
             
-            # NOTE: uses the greatest increase in convergent belief as tie-breaker between nodes that increase the resulting set of active nodes by the same amount
-            # if all nodes belong to some minimal closed group
-            if len(self.non_terminals) == 0: 
-                value = sum(list(self.convergentBeliefs.values()))
-                if bestCandidate is None:
-                    bestCandidate = (c, value, total_activations)
-                else:
-                    if total_activations > bestCandidate[2]:
-                        bestCandidate = (c, value, total_activations)
-                    elif total_activations == bestCandidate[2]:
-                        bestCandidate = bestCandidate if bestCandidate[1] > value else (c, value, total_activations)
+            A = self.convergentT        
+            b = np.array([self.initBeliefs[x] if x in self.initBeliefs else self.convergentBeliefs[x] for x in self.vertices])
+            
+            # calculate the vector of convergent beliefs in G'
+            res = A.dot(b.T)
+            value = sum(res)
 
-            else:
-                # still need to calculate convergent belief of each non terminals
-                A = self.convergentT        
-                b = np.array([self.initBeliefs[x] if x in self.initBeliefs else self.convergentBeliefs[x] for x in self.vertices])
-                
-                # calculate the vector of convergent beliefs in G'
-                res = A.dot(b.T)
-                value = sum(res)
+            if total_activations > best_value:
+                best_candidates, best_value, best_convergent_belief_value = [], total_activations, value
+                best_candidates.append((c, total_activations))
 
-                 # count the number of vertices in R that get activated
-                for i, r in enumerate(self.non_terminals):
-                    if res[i] >= self.thresholds[r]: total_activations += 1
+            elif total_activations == best_value:
+                if value > best_convergent_belief_value:
+                    best_candidates, best_value, best_convergent_belief_value = [], total_activations, value
+                    best_candidates.append((c, total_activations))
+                elif value == best_convergent_belief_value:
+                    best_candidates.append((c, total_activations))
 
-                if bestCandidate is None:
-                    bestCandidate = (c, value, total_activations)
-                else:
-                    if total_activations > bestCandidate[2]:
-                        bestCandidate = (c, value, total_activations)
-                    elif total_activations == bestCandidate[2]:
-                        bestCandidate = bestCandidate if bestCandidate[1] > value else (c, value, total_activations)
-        
-        return bestCandidate
+        return random.choice(best_candidates)
+
 
 
     """ sigma - influence function
@@ -469,16 +510,16 @@ def main():
     logging.basicConfig(level=logging.INFO)
 
     # NOTE: initialise directory path to store results in
-    dir_path = "./results2d/"
+    dir_path = "./results2/"
     assert os.path.exists(dir_path), "Directory to store results in is not defined"
 
     # NOTE: initialise settings
     ps = [0, 0.2, 0.4, 0.6, 0.8, 1]
-    clique_size = 5
+    clique_size = 10
     num_of_cliques = 10
-    targetSize = 15
-    p_iterations = 1        # average over different re-wiring instances by re-initialising the graph
-    k_iterations = 1000     # average over thresholds instance in one particular re-wiring process
+    targetSize = 30
+    p_iterations = 10        # average over different re-wiring instances by re-initialising the graph
+    k_iterations = 100     # average over thresholds instance in one particular re-wiring process
     
     # ensure size of initial active set is feasible
     assert targetSize <= clique_size * num_of_cliques, "Size of initial set of active nodes exceed the total number of nodes in the network"
@@ -486,10 +527,10 @@ def main():
     for p in ps:
         logging.info("p: " + str(p))
         # store sum of results for greedy, degree and random selections for p iterations
-        p_results_greedy, p_results_degree, p_results_random = dict(), dict(), dict()
+        p_results_greedy, p_results_aug_greedy, p_results_degree, p_results_random = dict(), dict(), dict(), dict()
 
         # NOTE: this is assuming the initial belief vector is a zero vector
-        p_results_greedy[0] , p_results_degree[0] , p_results_random[0] = 0, 0, 0
+        p_results_greedy[0], p_results_aug_greedy[0], p_results_degree[0] , p_results_random[0] = 0, 0, 0, 0
 
         # sizes of initial active sets to go through
         for _ in range(p_iterations):
@@ -497,22 +538,23 @@ def main():
             G.reShapeGraph()
 
             # store sum of results for greedy, degree and random selections for k iterations
-            k_results_greedy, k_results_degree, k_results_random = dict(), dict(), dict()
+            k_results_greedy, k_results_aug_greedy, k_results_degree, k_results_random = dict(), dict(), dict(), dict()
             
             for _ in range(k_iterations):
                 # reset candidates and vertices at the start of each k iteration as the values get poped
-                candidates = copy.deepcopy(G.getCandidates())
+                candidates_A = copy.deepcopy(G.getCandidates())
+                candidates_AandCB = copy.deepcopy(candidates_A)
                 vertices = copy.deepcopy(G.getVertices())
                 degree_ordered_nodes = copy.deepcopy(G.get_degree_ordered_nodes())
 
-                GA_0, DA_0, RA_0 = [], [], []
-                prev_activations_greedy = None
+                GA_0, GAA_0, DA_0, RA_0 = [], [], [], []
+                prev_activations_greedy, prev_activations_greedy_aug = None, None
                 for k in range(1, targetSize+1):  
                     # hill climbing to determine next best node 
-                    if len(candidates) > 0:
-                        best_candidateG, _, total_activations = G.hill_climbing(GA_0, candidates)
-                        candidates.remove(best_candidateG)
-                        GA_0.append(best_candidateG)
+                    if len(candidates_A) > 0:
+                        (best_candidate, total_activations) = G.hill_climbing(GA_0, candidates_A)
+                        candidates_A.remove(best_candidate)
+                        GA_0.append(best_candidate)
                         if k not in k_results_greedy: k_results_greedy[k] = 0
                         k_results_greedy[k] += total_activations
                         prev_activations_greedy = total_activations
@@ -520,7 +562,21 @@ def main():
                     # use the previous initial active set if there are no more candidates to select from
                     else:
                         if k not in k_results_greedy: k_results_greedy[k] = 0
-                        k_results_greedy[k] += prev_activations_greedy                    
+                        k_results_greedy[k] += prev_activations_greedy    
+
+
+                    # augmented hill climbing to also consider the convergent belief
+                    if len(candidates_AandCB) > 0:
+                        (best_candidate, total_activations) = G.hill_climbing_augmented(GAA_0, candidates_AandCB)
+                        candidates_AandCB.remove(best_candidate)
+                        GAA_0.append(best_candidate)
+                        if k not in k_results_aug_greedy: k_results_aug_greedy[k] = 0
+                        k_results_aug_greedy[k] += total_activations
+                        prev_activations_greedy_aug = total_activations
+                    else:
+                        if k not in k_results_aug_greedy: k_results_aug_greedy[k] = 0
+                        k_results_aug_greedy[k] += prev_activations_greedy_aug 
+
 
                     # degree heuristic to determine next best node
                     if len(degree_ordered_nodes) > 0:
@@ -546,6 +602,8 @@ def main():
             for k in k_results_greedy: 
                 if k not in p_results_greedy: p_results_greedy[k] = 0
                 p_results_greedy[k] += k_results_greedy[k] // k_iterations
+                if k not in p_results_aug_greedy: p_results_aug_greedy[k] = 0
+                p_results_aug_greedy[k] += k_results_aug_greedy[k] // k_iterations
                 if k not in p_results_degree: p_results_degree[k] = 0
                 p_results_degree[k] += k_results_degree[k] // k_iterations
                 if k not in p_results_random: p_results_random[k] = 0
@@ -554,12 +612,15 @@ def main():
         # average the results over p iterations
         for k in k_results_greedy: 
             p_results_greedy[k] = p_results_greedy[k] // p_iterations
+            p_results_aug_greedy[k] = p_results_aug_greedy[k] // p_iterations
             p_results_degree[k] = p_results_degree[k] // p_iterations
             p_results_random[k] = p_results_random[k] // p_iterations
 
         # save results to file
         with open(dir_path + str(p) + ".txt", 'w') as f:
             f.write(json.dumps(p_results_greedy))
+            f.write('\n')
+            f.write(json.dumps(p_results_aug_greedy))
             f.write('\n')
             f.write(json.dumps(p_results_degree))
             f.write('\n')

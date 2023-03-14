@@ -19,6 +19,7 @@ def main():
             # fetch simulated data from the file
             with open(file_path, 'r') as f:
 
+
                 # plot the results
                 data = json.loads(f.readline()) 
                 x = [ int(xd) for xd in data.keys() ]
@@ -26,6 +27,12 @@ def main():
                 labelValue = "Greedy"
                 plt.plot(x,y, label=labelValue)
                 
+                data = json.loads(f.readline()) 
+                x = [ int(xd) for xd in data.keys() ]
+                y = [ int(yd) for yd in data.values() ]
+                labelValue = "Augmented Greedy"
+                plt.plot(x,y, label=labelValue)
+
                 data = json.loads(f.readline())   
                 x = [ int(xd) for xd in data.keys() ]
                 y = [ int(yd) for yd in data.values() ]
