@@ -105,7 +105,7 @@ def main():
         p_results_random[k] = p_results_random[k] // p_iterations
     
     # save results to file
-    with open(dir_path + "simulation_test.txt", 'w') as f:
+    with open(dir_path + "simulation.txt", 'w') as f:
         f.write(json.dumps(p_results_greedy))
         f.write('\n')
         f.write(json.dumps(p_results_aug_greedy))
