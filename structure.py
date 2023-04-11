@@ -19,38 +19,44 @@ def main():
     assert os.path.exists(dir_path), "Directory to store results in is not defined"
 
     # NOTE: initialise settings
-    ps = np.linspace(0,1,101)
+    ps = np.linspace(0,1,101)   # re-wiring probabilities
     clique_sizes = [1,2,3,4,5,6,7,8,9,10]
     num_of_cliques = 100
-    p_iterations = 100       
-    
+    p_iterations = 100  # number of iterations to re-generate the graph
 
-    csResults = dict()
+    terminal_results, non_terminal_results = dict(), dict()
     for clique_size in clique_sizes:
         logging.info("Clique size: " + str(clique_size))
 
-        net_struct_results = dict()
+        terminal_struct, non_terminal_struct = dict(), dict()
         for p in ps:
-            # logging.info("p: " + str(p))
-
-            p_results_greedy, p_results_aug_greedy, p_results_degree, p_results_random = dict(), dict(), dict(), dict()
-            p_results_greedy[0], p_results_aug_greedy[0], p_results_degree[0] , p_results_random[0] = 0, 0, 0, 0        # NOTE: this is assuming the initial belief vector is a zero vector
+            if p % 10 == 0: logging.info("Re-wiring probability: ", p)
 
             for _ in range(p_iterations):
                 G = Graph(num_of_cliques, clique_size, p)
                 G.reShapeGraph()
 
-                terminals, _ = G.network_structure()
-                if p not in net_struct_results: net_struct_results[p] = 0
-                net_struct_results[p] += len(terminals)
+                terminals, non_terminals, _ = G.network_structure()
+                if p not in terminal_struct: terminal_struct[p] = 0
+                terminal_struct[p] += len(terminals)
+                if p not in non_terminal_struct: non_terminal_struct[p] = 0
+                non_terminal_struct[p] += len(non_terminals)
 
-        for p in net_struct_results: 
-            net_struct_results[p] /= p_iterations
+        for p in terminal_struct: 
+            terminal_struct[p] /= p_iterations
+            non_terminal_struct[p] /= p_iterations
         
-        csResults[clique_size] = net_struct_results
+        terminal_results[clique_size] = terminal_struct
+        non_terminal_results[clique_size] = non_terminal_struct
     
-    with open(dir_path+"structure.txt", 'w') as f:
-        f.write(json.dumps(csResults))
+    with open(dir_path+"structure_T.txt", 'w') as f:
+        f.write(json.dumps(terminal_results))
+        f.write('\n')
+        
+    with open(dir_path+"structure_nonT.txt", 'w') as f:
+        f.write(json.dumps(non_terminal_results))
+        f.write('\n')
 
 if __name__ == '__main__':
-    cProfile.run('main()')
+    # cProfile.run('main()')
+    main()
