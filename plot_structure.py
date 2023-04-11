@@ -4,7 +4,11 @@ import numpy as np
 
 def main():
     data = {}
-    with open("./results/structure.txt", 'r') as f:
+
+    # NOTE: change filename to 'structure_nonT.txt' to plot results of non-terminals
+    filename = "structure_T.txt"
+    
+    with open("./results/"+filename, 'r') as f:
         data = json.loads(f.readline())
     
     fig = plt.figure(figsize = (12,10))
@@ -18,7 +22,7 @@ def main():
     ax.plot_surface(X,Y,Z, cmap=plt.cm.cividis)
     ax.set_xlabel("Re-wiring Probability p", labelpad=20)
     ax.set_ylabel("Clique Size", labelpad=20)
-    ax.set_zlabel("No. of Terminating Groups", labelpad=20)
+    ax.set_zlabel("No. of Non-Terminals", labelpad=20)
     plt.yticks([ y[0] for y in Y])
 
     plt.title("")
