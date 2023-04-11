@@ -488,7 +488,7 @@ class Graph:
         return self.initial_vertices
     
     def network_structure(self):
-        return [self.terminals , self.non_terminals]
+        return [self.terminals , self.non_terminals, [ (u,v) for u in self.edges for v in self.edges[u] if self.edges[u][v] > 0] ]
 
 
     def __str__(self):
