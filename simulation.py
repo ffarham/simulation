@@ -16,17 +16,17 @@ def main():
     dir_path = "./results/"
     assert os.path.exists(dir_path), "Directory to store results in is not defined"
 
-    # initialise settings
-    p = 1
+    # NOTE: initialise settings
+    p = 0.05
     num_of_cliques = 100
-    clique_size = 10
+    clique_size = 5
     target_size = 30    # max size of initial active set
 
     p_iterations = 10    # average over different re-wiring probabilities
-    k_iterations = 10    # average over different threshold instances in one particular rewiring instance
+    k_iterations = 100    # average over different threshold instances in one particular rewiring instance
 
     p_results_greedy, p_results_aug_greedy, p_results_degree, p_results_random = dict(), dict(), dict(), dict()
-    p_results_greedy[0], p_results_aug_greedy[0], p_results_degree[0] , p_results_random[0] = 0, 0, 0, 0        # NOTE: this is assuming the initial belief vector is a zero vector
+    p_results_greedy[0], p_results_aug_greedy[0], p_results_degree[0] , p_results_random[0] = 0, 0, 0, 0,         # NOTE: this is assuming the initial belief vector is a zero vector
     for p_iter in range(p_iterations):
         logging.info(p_iter)
         G = Graph(num_of_cliques, clique_size, p)  
@@ -42,8 +42,8 @@ def main():
             degree_ordered_nodes = copy.deepcopy(G.get_degree_ordered_nodes())
 
             GA_0, GAA_0, DA_0, RA_0 = [], [], [], []
-            for k in range(1, target_size+1):  
-                
+            for k in range(1, target_size+1): 
+         
                 # hill-climbing
                 if len(candidates_A) == 0: 
                     if k not in k_results_greedy: k_results_greedy[k] = 0
@@ -98,7 +98,7 @@ def main():
             p_results_random[k] += k_results_random[k] // k_iterations
 
     # average the results over p iterations
-    for k in k_results_greedy: 
+    for k in p_results_greedy: 
         p_results_greedy[k] = p_results_greedy[k] // p_iterations
         p_results_aug_greedy[k] = p_results_aug_greedy[k] // p_iterations
         p_results_degree[k] = p_results_degree[k] // p_iterations
